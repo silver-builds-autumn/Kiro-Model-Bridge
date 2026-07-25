@@ -1,0 +1,5 @@
+# 含 apiKey,勿提交
+config.json
+# CA 私钥与签发缓存
+.data/
+node_modules/

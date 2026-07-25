@@ -1,0 +1,21 @@
+{
+  "name": "kiro-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "拦截 Kiro 推理请求并改道到自建中转站的纯命令行工具",
+  "bin": {
+    "kiro-relay": "src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs run",
+    "doctor": "node src/index.mjs doctor"
+  },
+  "dependencies": {
+    "node-forge": "^1.3.3",
+    "undici": "^7.19.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
