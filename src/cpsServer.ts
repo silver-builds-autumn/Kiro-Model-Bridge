@@ -6,28 +6,11 @@ import { PROXY_ID_PATH } from "./krsServer";
 import {
   fetchRelayModels,
   groupModelsByEffort,
-  EFFORT_LEVELS,
-  DEFAULT_EFFORT_LEVEL,
 } from "./modelStore";
 import { getEffortMode } from "./effort";
+import { buildCpsModels, type CpsModel } from "./cpsModelSchema";
 
 const PROXY_ID_TOKEN = "api2kiro";
-
-interface CpsModel {
-  modelId: string;
-  modelName: string;
-  description: string;
-  promptCaching: {
-    maximumCacheCheckpointsPerRequest: number;
-    minimumTokensPerCacheCheckpoint: number;
-    supportsPromptCaching: boolean;
-  };
-  rateUnit: string;
-  supportedInputTypes: string[];
-  tokenLimits: { maxInputTokens: number; maxOutputTokens: number };
-  additionalModelRequestFieldsSchema?: unknown;
-  defaultEffortLevel?: string;
-}
 
 export class CpsProxyServer {
   private holder: PortHolder;
@@ -66,90 +49,11 @@ export class CpsProxyServer {
   private async buildModelList(): Promise<{ models: CpsModel[]; defaultModel?: { modelId: string } }> {
     const relay = await fetchRelayModels(false);
     const groups = groupModelsByEffort(relay);
-    const mode = getEffortMode();
-    const official = getRelayMode() === "anthropic";
-
-    const models: CpsModel[] = groups.map((g) => {
-      const model: CpsModel = {
-        modelId: g.baseId,
-        modelName: g.name || g.baseId,
-        description: g.description || "",
-        promptCaching: {
-          maximumCacheCheckpointsPerRequest: 4,
-          minimumTokensPerCacheCheckpoint: 1024,
-          supportsPromptCaching: true,
-        },
-        rateUnit: "Credit",
-        supportedInputTypes: ["TEXT", "IMAGE"],
-        tokenLimits: {
-          maxInputTokens: g.maxInputTokens || 200000,
-          maxOutputTokens: g.maxOutputTokens || 64000,
-        },
-      };
-
-      // 决定该模型对外暴露哪些 effort 档位（与 Kiro 官方对齐）：
-      // 1) 优先用中转站透出的官方 nativeEffortLevels（各模型不一致，且无 effort 的模型
-      //    根本不会带——从而 Kiro 选择器不会给它显示思考档位，彻底对齐官方）。
-      // 2) 其次 modelVariant 模式用 -<effort> 后缀变体推断。
-      // 3) 最后（通用中转站无 effort 信息时）auto/thinkingBudget 兜底暴露全档位。
-      let efforts: string[] = [];
-      let schemaPath = "output_config";
-      if (official) {
-        // 官方 Anthropic 模式：不暴露 Kiro effort/reasoning 档位（sub2api 为纯模型，交给上游默认）
-      } else if (g.nativeEffortLevels && g.nativeEffortLevels.length > 0) {
-        efforts = g.nativeEffortLevels;
-        if (g.effortSchemaPath) {
-          schemaPath = g.effortSchemaPath;
-        }
-      } else if (mode === "modelVariant") {
-        efforts = EFFORT_LEVELS.filter((e) => g.efforts.has(e));
-      } else if (mode === "auto" || mode === "thinkingBudget") {
-        efforts = [...EFFORT_LEVELS];
-      }
-
-      if (efforts.length > 0) {
-        const defaultEffort =
-          g.defaultEffortLevel && efforts.includes(g.defaultEffortLevel)
-            ? g.defaultEffortLevel
-            : efforts.includes(DEFAULT_EFFORT_LEVEL)
-            ? DEFAULT_EFFORT_LEVEL
-            : efforts[0];
-
-        if (schemaPath === "reasoning") {
-          // GPT 5.6：reasoning.{mode?, effort}，additionalProperties:false（逐字对齐上游真实 schema，
-          // 让 Kiro 选择器识别 standard/pro 思考模式）。mode 仅当中转站透出 reasoningModes 时出现。
-          const reasoningProps: Record<string, unknown> = {};
-          if (g.reasoningModes && g.reasoningModes.length > 0) {
-            const defMode =
-              g.defaultReasoningMode && g.reasoningModes.includes(g.defaultReasoningMode)
-                ? g.defaultReasoningMode
-                : g.reasoningModes[0];
-            reasoningProps.mode = { type: "string", enum: g.reasoningModes, default: defMode };
-          }
-          reasoningProps.effort = { type: "string", enum: efforts, default: defaultEffort };
-          model.additionalModelRequestFieldsSchema = {
-            type: "object",
-            properties: { reasoning: { type: "object", properties: reasoningProps } },
-            additionalProperties: false,
-          };
-        } else {
-          model.additionalModelRequestFieldsSchema = {
-            type: "object",
-            properties: {
-              [schemaPath]: {
-                type: "object",
-                properties: {
-                  effort: { type: "string", enum: efforts },
-                },
-              },
-            },
-          };
-        }
-        model.defaultEffortLevel = defaultEffort;
-      }
-
-      return model;
-    });
+    const models: CpsModel[] = buildCpsModels(
+      groups,
+      getRelayMode(),
+      getEffortMode(),
+    );
 
     const result: { models: CpsModel[]; defaultModel?: { modelId: string } } = { models };
     if (models.length > 0) {

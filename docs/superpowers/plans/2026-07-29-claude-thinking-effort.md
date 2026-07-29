@@ -12,7 +12,8 @@
 
 ## File Structure
 
-- Modify: `src/cpsServer.ts` - extract the CPS model-schema builder into an exported pure function so Claude schema behavior is unit-testable.
+- Create: `src/cpsModelSchema.ts` - own the pure CPS model-schema builder without importing the VS Code runtime.
+- Modify: `src/cpsServer.ts` - delegate CPS schema construction to the pure builder.
 - Modify: `src/providers/anthropicProvider.ts` - consume selected Claude effort and create native `thinking.budget_tokens` without leaking `output_config` upstream.
 - Modify: `test/anthropicProvider.test.ts` - test every selected Claude tier, disabled thinking, and existing Kiro behavior.
 - Create: `test/cpsModelSchema.test.ts` - test CPS schema visibility for Claude `auto`, `thinkingBudget`, `modelVariant`, and `off` modes.
@@ -21,7 +22,8 @@
 ### Task 1: Make Claude CPS Schema Testable
 
 **Files:**
-- Modify: `src/cpsServer.ts:17-154`
+- Create: `src/cpsModelSchema.ts`
+- Modify: `src/cpsServer.ts:1-154`
 - Create: `test/cpsModelSchema.test.ts`
 
 - [ ] **Step 1: Write failing CPS schema tests**
@@ -31,7 +33,7 @@ Create `test/cpsModelSchema.test.ts` using a minimal `EffortGroup` without nativ
 ```ts
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCpsModels } from "../src/cpsServer";
+import { buildCpsModels } from "../src/cpsModelSchema";
 import type { EffortGroup } from "../src/modelStore";
 
 const group: EffortGroup = {
@@ -88,9 +90,9 @@ npx tsx --test test/cpsModelSchema.test.ts
 
 Expected: FAIL because `buildCpsModels` is not exported yet.
 
-- [ ] **Step 3: Extract the pure CPS model builder and add Claude selection rules**
+- [ ] **Step 3: Create the pure CPS model builder and delegate from CPS**
 
-In `src/cpsServer.ts`, export `CpsModel` and extract the body of `groups.map(...)` from `buildModelList` into:
+Create `src/cpsModelSchema.ts` and move the body of `groups.map(...)` from `buildModelList` into:
 
 ```ts
 export function buildCpsModels(
@@ -121,7 +123,7 @@ export function buildCpsModels(
 }
 ```
 
-Import `EffortGroup` and `EffortMode`; replace the old inline `groups.map(...)` call with:
+Import `EffortGroup` and `EffortMode` as types in the new module. In `src/cpsServer.ts`, import `buildCpsModels` and replace the old inline `groups.map(...)` call with:
 
 ```ts
 const models = buildCpsModels(groups, getRelayMode(), getEffortMode());
@@ -143,7 +145,7 @@ Expected: CPS tests report `pass 4 / fail 0`; TypeScript exits `0`.
 - [ ] **Step 5: Commit the CPS schema work**
 
 ```powershell
-git add src/cpsServer.ts test/cpsModelSchema.test.ts
+git add src/cpsModelSchema.ts src/cpsServer.ts test/cpsModelSchema.test.ts docs/superpowers/plans/2026-07-29-claude-thinking-effort.md
 git commit -m "feat: expose Claude thinking effort schema"
 ```
 
