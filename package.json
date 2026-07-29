@@ -124,7 +124,7 @@
             "off"
           ],
           "default": "auto",
-          "description": "Kiro 思考档位（max/xhigh/high/medium/low）的处理方式。auto：中转站有 model-档位 变体时切换变体，否则把档位映射为 thinking 预算（同模型，安全无副作用）；modelVariant：优先切到 model-档位 变体，没有就切到中转站的 model-thinking 思考模型（本中转站的思考开关），并按档位设预算；thinkingBudget：始终把档位映射为 thinking 预算；off：关闭档位选择器。注：本中转站不会回传思考过程文本。"
+          "description": "Kiro 思考档位（max/xhigh/high/medium/low）的处理方式。Claude Messages 模式会把所选档位映射为原生 Anthropic thinking.budget_tokens；auto：中转站有 model-档位 变体时切换变体，否则把档位映射为 thinking 预算（同模型，安全无副作用）；modelVariant：优先切到 model-档位变体，没有就切到中转站的 model-thinking 思考模型，并按档位设预算；thinkingBudget：始终把档位映射为 thinking 预算；off：关闭档位选择器且不发送 thinking。注：本中转站不会回传思考过程文本。"
         },
         "api2kiro.effortBudgets": {
           "type": "object",

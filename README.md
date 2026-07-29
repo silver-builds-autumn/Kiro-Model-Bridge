@@ -29,6 +29,10 @@ Each mode has an isolated profile: API key, base URL, default model, model mappi
 - Encrypted OpenAI reasoning is stored in a versioned Kiro reasoning-signature envelope for the next tool turn. Foreign, malformed, or missing envelopes are dropped; the tool result and normal conversation continue without encrypted reasoning replay.
 - Retry is allowed only before text, reasoning, or a tool event is committed. A stream failure after visible output is reported once and is never replayed.
 
+### Claude thinking effort
+
+Claude Messages mode displays Kiro's `Low` / `Medium` / `High` / `XHigh` / `Max` selector whenever `api2kiro.effortMode` is not `off`. The selected tier is translated to native Anthropic extended thinking through `thinking.budget_tokens`. A relay that rejects extended thinking must use `api2kiro.effortMode: "off"`; API2Kiro does not silently retry without the selected tier.
+
 ## Setup
 
 1. Install `api2kiro-1.8.0.vsix` with `Extensions: Install from VSIX`, then reload Kiro.
@@ -47,6 +51,7 @@ Model discovery runs automatically. Configure a default model or mapping in the 
 | `api2kiro.defaultModel` / `officialDefaultModel` / `openaiDefaultModel` | Per-provider manual fallback model |
 | `api2kiro.modelMapping` / `officialModelMapping` / `openaiModelMapping` | Per-provider Kiro-to-upstream model mapping |
 | `api2kiro.maxTokens` | Maximum output tokens |
+| `api2kiro.effortMode` / `api2kiro.effortBudgets` | Kiro thinking-tier selector and its budgets; in Claude Messages mode the selected tier becomes native Anthropic `thinking.budget_tokens` |
 | `api2kiro.autoRetry` / `api2kiro.maxRetries` | Safe pre-commit retry policy |
 | `api2kiro.port` / `api2kiro.cpsPort` | Shared local proxy ports |
 

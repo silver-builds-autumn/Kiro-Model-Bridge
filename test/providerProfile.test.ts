@@ -55,4 +55,11 @@ test("扩展配置公开三种模式但不公开 OpenAI 明文 Key", () => {
   assert.equal(properties["api2kiro.openaiDefaultModel"].type, "string");
   assert.equal(properties["api2kiro.openaiModelMapping"].type, "object");
   assert.equal(properties["api2kiro.openaiApiKey"], undefined);
+  assert.deepEqual(properties["api2kiro.effortMode"].enum, [
+    "auto",
+    "modelVariant",
+    "thinkingBudget",
+    "off",
+  ]);
+  assert.equal(properties["api2kiro.effortBudgets"].type, "object");
 });

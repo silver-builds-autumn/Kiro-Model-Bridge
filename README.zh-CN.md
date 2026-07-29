@@ -29,6 +29,10 @@
 - OpenAI 加密 reasoning 会封装进带版本的 Kiro reasoning 签名，用于下一轮工具回放。外部前缀、损坏或缺失的信封会被丢弃，但工具结果和普通对话仍会继续，不会因 reasoning 降级而中断。
 - 只有在尚未输出正文、推理或工具事件前才允许重试；一旦已输出，流错误只报告一次，禁止重放。
 
+### Claude 思考档位
+
+当 `api2kiro.effortMode` 不为 `off` 时，Claude Messages 模式会显示 Kiro 输入框的 `Low` / `Medium` / `High` / `XHigh` / `Max` 五档选择器。所选档位会转换为 Anthropic 原生扩展思考的 `thinking.budget_tokens`。若中转站拒绝扩展思考，必须设置 `api2kiro.effortMode: "off"`；API2Kiro 不会静默移除已选择的档位后重试。
+
 ## 安装与配置
 
 1. 用 `Extensions: Install from VSIX` 安装 `api2kiro-1.8.0.vsix`，然后重新加载 Kiro。
@@ -47,6 +51,7 @@
 | `api2kiro.defaultModel` / `officialDefaultModel` / `openaiDefaultModel` | 各模式的手工兜底模型 |
 | `api2kiro.modelMapping` / `officialModelMapping` / `openaiModelMapping` | 各模式的 Kiro 到上游模型映射 |
 | `api2kiro.maxTokens` | 最大输出 token |
+| `api2kiro.effortMode` / `api2kiro.effortBudgets` | Kiro 思考档位选择器及预算；Claude Messages 模式会把所选档位转换为 Anthropic 原生 `thinking.budget_tokens` |
 | `api2kiro.autoRetry` / `api2kiro.maxRetries` | 仅输出前生效的安全重试策略 |
 | `api2kiro.port` / `api2kiro.cpsPort` | 多窗口共享的本地代理端口 |
 
