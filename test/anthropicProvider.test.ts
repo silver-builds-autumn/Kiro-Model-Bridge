@@ -14,7 +14,11 @@ function cwRequest(): CwRequest {
   };
 }
 
-function fakeProviderDeps(effort?: ProviderEffort): ProviderDeps {
+function fakeProviderDeps(
+  effort?: ProviderEffort,
+  effortMode: "off" | "modelVariant" | "thinkingBudget" | "auto" = "auto",
+  thinking?: { type: "enabled" | "disabled"; budget_tokens?: number },
+): ProviderDeps {
   return {
     version: "1.8.0",
     getApiKey: () => "secret",
@@ -22,24 +26,52 @@ function fakeProviderDeps(effort?: ProviderEffort): ProviderDeps {
     resolveModel: () => "claude-test",
     getMaxTokens: () => 32000,
     getEffort: async () => effort,
+    getEffortBudget: (selected) => ({
+      low: 2048,
+      medium: 4096,
+      high: 8192,
+      xhigh: 16384,
+      max: 24576,
+    })[selected],
     getReasoningMode: () => undefined,
+    getEffortMode: () => effortMode,
+    getThinkingConfig: () => thinking,
   };
 }
 
-test("Anthropic 模式剥离 Kiro 私有字段并发送双认证", async () => {
+test("Anthropic 模式把档位映射为原生 thinking 且不泄漏 Kiro 字段", async () => {
+  for (const [effort, budget] of [
+    ["low", 2048],
+    ["medium", 4096],
+    ["high", 8192],
+    ["xhigh", 16384],
+    ["max", 24576],
+  ] as const) {
+    const prepared = await createAnthropicProvider(
+      "anthropic",
+      fakeProviderDeps(effort),
+    ).prepare(cwRequest());
+    const body = JSON.parse(prepared.body);
+
+    assert.equal(prepared.url, "https://relay.example/v1/messages");
+    assert.equal(body.model, "claude-test");
+    assert.equal(body.max_tokens, 32000);
+    assert.deepEqual(body.thinking, { type: "enabled", budget_tokens: budget });
+    assert.equal(body.output_config, undefined);
+    assert.equal(prepared.headers.Authorization, "Bearer secret");
+    assert.equal(prepared.headers["x-api-key"], "secret");
+  }
+});
+
+test("Anthropic 禁用思考时不发送 thinking", async () => {
   const prepared = await createAnthropicProvider(
     "anthropic",
-    fakeProviderDeps("high"),
+    fakeProviderDeps("high", "auto", { type: "disabled" }),
   ).prepare(cwRequest());
   const body = JSON.parse(prepared.body);
 
-  assert.equal(prepared.url, "https://relay.example/v1/messages");
-  assert.equal(body.model, "claude-test");
-  assert.equal(body.max_tokens, 32000);
-  assert.equal(body.output_config, undefined);
   assert.equal(body.thinking, undefined);
-  assert.equal(prepared.headers.Authorization, "Bearer secret");
-  assert.equal(prepared.headers["x-api-key"], "secret");
+  assert.equal(body.output_config, undefined);
 });
 
 test("Kiro 模式保留 output_config effort", async () => {

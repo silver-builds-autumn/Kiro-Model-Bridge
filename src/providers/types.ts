@@ -32,6 +32,7 @@ export interface ProviderDeps {
   resolveModel(request: CwRequest, provider: ProviderId): string;
   getMaxTokens(): number;
   getEffort(request: CwRequest): Promise<ProviderEffort | undefined>;
+  getEffortBudget(effort: ProviderEffort): number;
   getReasoningMode(request: CwRequest): string | undefined;
   getThinkingConfig?(): {
     type: "enabled" | "disabled";

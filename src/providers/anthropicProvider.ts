@@ -3,13 +3,34 @@ import { resolveProviderApiUrl } from "../providerProfile";
 import {
   applyEffort,
   buildAnthropicRequest,
+  setThinkingBudget,
   type AnthropicRequest,
 } from "../translate";
+import type { EffortMode } from "../effort";
+import type { ThinkingConfig } from "../config";
 import type {
   PreparedProviderRequest,
   ProviderAdapter,
   ProviderDeps,
+  ProviderEffort,
 } from "./types";
+
+function applyNativeClaudeEffort(
+  body: AnthropicRequest,
+  effort: ProviderEffort | undefined,
+  mode: EffortMode,
+  thinking: ThinkingConfig | undefined,
+  getEffortBudget: (effort: ProviderEffort) => number,
+): void {
+  delete body.output_config;
+  if (mode === "off" || thinking?.type === "disabled") {
+    delete body.thinking;
+    return;
+  }
+  if (effort) {
+    setThinkingBudget(body, getEffortBudget(effort));
+  }
+}
 
 export function createAnthropicProvider(
   id: "kiro" | "anthropic",
@@ -18,15 +39,21 @@ export function createAnthropicProvider(
   return {
     id,
     async prepare(request) {
+      const thinking = deps.getThinkingConfig?.();
       const body = buildAnthropicRequest(request, {
         model: deps.resolveModel(request, id),
         maxTokens: deps.getMaxTokens(),
-        thinking: deps.getThinkingConfig?.(),
+        thinking,
         thinkingBudget: deps.getThinkingBudget?.(),
       });
       if (id === "anthropic") {
-        delete body.thinking;
-        delete body.output_config;
+        applyNativeClaudeEffort(
+          body,
+          await deps.getEffort(request),
+          deps.getEffortMode?.() ?? "auto",
+          thinking,
+          deps.getEffortBudget,
+        );
       } else {
         applyEffort(
           body,

@@ -4,7 +4,7 @@ import { CwRequest } from "./cwTypes";
 import { EVENT_STREAM_CONTENT_TYPE } from "./eventstream";
 import { writeEvent } from "./cwEvents";
 import { conversationId, latestModelId, resolveModel } from "./translate";
-import { getEffortMode, getSelectedEffort, getSelectedMode } from "./effort";
+import { budgetForEffort, getEffortMode, getSelectedEffort, getSelectedMode } from "./effort";
 import { isIntentClassifierRequest, buildIntentClassifierResponse } from "./intentClassifier";
 import { requestUpstream } from "./upstream";
 import { PortHolder, OwnershipListener } from "./portBinder";
@@ -228,6 +228,7 @@ export class KrsProxyServer {
       },
       getMaxTokens,
       getEffort: getSelectedEffort,
+      getEffortBudget: budgetForEffort,
       getReasoningMode: getSelectedMode,
       getThinkingConfig,
       getThinkingBudget,

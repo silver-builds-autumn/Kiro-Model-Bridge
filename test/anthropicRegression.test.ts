@@ -33,6 +33,7 @@ async function executeAnthropicTurn(
       resolveModel: () => "claude-test",
       getMaxTokens: () => 32000,
       getEffort: async () => undefined,
+      getEffortBudget: () => 0,
       getReasoningMode: () => undefined,
     };
     const prepared = await createAnthropicProvider("anthropic", deps).prepare(request);

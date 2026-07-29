@@ -200,7 +200,7 @@ Expected: the new Claude tests fail because the provider currently deletes `thin
 
 - [ ] **Step 3: Implement the native Claude mapper**
 
-In `src/providers/anthropicProvider.ts`, import `budgetForEffort` and `EffortMode` from `../effort`, plus `setThinkingBudget` and `ThinkingConfig` types as required. Add a focused helper:
+Add `getEffortBudget(effort)` to `ProviderDeps`; KRS supplies the existing config-aware `budgetForEffort`, while tests supply fixed values. In `src/providers/anthropicProvider.ts`, import `EffortMode` as a type only, plus `setThinkingBudget` and `ThinkingConfig` types as required. Add a focused helper:
 
 ```ts
 function applyNativeClaudeEffort(
@@ -208,6 +208,7 @@ function applyNativeClaudeEffort(
   effort: ProviderEffort | undefined,
   mode: EffortMode,
   thinking: ThinkingConfig | undefined,
+  getEffortBudget: (effort: ProviderEffort) => number,
 ): void {
   delete body.output_config;
   if (mode === "off" || thinking?.type === "disabled") {
@@ -215,7 +216,7 @@ function applyNativeClaudeEffort(
     return;
   }
   if (effort) {
-    setThinkingBudget(body, budgetForEffort(effort));
+  setThinkingBudget(body, getEffortBudget(effort));
   }
 }
 ```

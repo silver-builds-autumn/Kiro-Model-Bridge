@@ -37,6 +37,7 @@ async function executeProviderTurn(
       resolveModel: () => "gpt-test",
       getMaxTokens: () => 32000,
       getEffort: async () => "high",
+      getEffortBudget: () => 0,
       getReasoningMode: () => undefined,
     };
     const prepared = await createOpenAIResponsesProvider(deps).prepare(request);

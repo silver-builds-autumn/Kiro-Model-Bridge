@@ -176,6 +176,7 @@ test("Responses 事件 Provider 注册到原生 /responses", async () => {
     resolveModel: () => "gpt-test",
     getMaxTokens: () => 32000,
     getEffort: async () => "max",
+    getEffortBudget: () => 0,
     getReasoningMode: () => undefined,
   };
 
