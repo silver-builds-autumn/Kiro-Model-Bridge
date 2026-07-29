@@ -5,6 +5,7 @@ import { KrsProxyServer } from "./krsServer";
 import { CpsProxyServer } from "./cpsServer";
 import { applyOverrides, restoreAll } from "./endpoints";
 import { SidebarProvider } from "./sidebar";
+import { profileKeys } from "./providerProfile";
 
 let krsServer: KrsProxyServer | undefined;
 let cpsServer: CpsProxyServer | undefined;
@@ -215,7 +216,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true,
       });
       if (value !== undefined) {
-        warnIfFailed(await updateSetting("baseUrl", value.trim()));
+        warnIfFailed(await updateSetting(profileKeys(getRelayMode()).baseUrl, value.trim()));
         sidebar?.postAll();
       }
     }),

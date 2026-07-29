@@ -3,6 +3,7 @@ import { clearApiKey, getApiKey, getBaseUrl, isEnabled, resolveRootUrl, setApiKe
 import { error } from "./log";
 import { fetchRelayUsage } from "./usage";
 import { fetchRelayModels } from "./modelStore";
+import { normalizeProviderId, profileKeys } from "./providerProfile";
 
 export interface PortInfo {
   krsPort: number;
@@ -48,15 +49,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.postAll();
         break;
       case "saveConfig": {
-        const official = getRelayMode() === "anthropic";
-        const urlKey = official ? "officialBaseUrl" : "baseUrl";
+        const provider = getRelayMode();
+        const urlKey = profileKeys(provider).baseUrl;
         const baseUrl = String(msg.baseUrl ?? "").trim();
         const apiKey = String(msg.apiKey ?? "").trim();
         const r1 = await updateSetting(urlKey, baseUrl);
         let keyError = "";
         if (apiKey) {
           try {
-            await setApiKey(getRelayMode(), apiKey);
+            await setApiKey(provider, apiKey);
           } catch (e) {
             keyError = (e as Error).message || String(e);
           }
@@ -86,7 +87,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "setMode": {
-        const mode = msg.mode === "anthropic" ? "anthropic" : "kiro";
+        const mode = normalizeProviderId(msg.mode);
         const r = await updateSetting("mode", mode);
         if (!r.settingsOk) {
           this.toast("error", "切换模式失败:" + (r.error || "未知错误"));
@@ -151,8 +152,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       .then((models) => this.post({ type: "models", count: Array.isArray(models) ? models.length : null }))
       .catch(() => this.post({ type: "models", count: null }));
 
-    if (getRelayMode() === "anthropic") {
-      // 官方模式不查 kiro2cc 计费；余额/用量在 sub2api 自己的面板看
+    if (getRelayMode() !== "kiro") {
+      // 外部标准协议模式不查 kiro2cc 计费。
       this.post({ type: "usage", ok: false, official: true });
       return;
     }
@@ -265,7 +266,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <label>中转模式</label>
     <div class="btns">
       <button class="btn btn-ghost" id="modeKiro" style="flex:1;">深度兼容 (Kiro)</button>
-      <button class="btn btn-ghost" id="modeOfficial" style="flex:1;">官方 Anthropic</button>
+      <button class="btn btn-ghost" id="modeAnthropic" style="flex:1;">Claude</button>
+      <button class="btn btn-ghost" id="modeOpenAI" style="flex:1;">GPT</button>
     </div>
     <div class="muted" id="modeHint" style="margin-top:6px;"></div>
   </div>
@@ -282,8 +284,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </div>
   </div>
 
-  <div class="card hidden" id="officialNote">
-    <div class="muted">官方 Anthropic 模式：已直连 <span id="officialUrlNote"></span>。用量与余额请在该中转站自己的面板查看。</div>
+  <div class="card hidden" id="externalNote">
+    <div class="muted"><span id="externalModeNote"></span>：<span id="externalUrlNote"></span></div>
   </div>
 
   <div class="card" id="usageCard">
@@ -370,7 +372,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   $('usageWeb').addEventListener('click', () => vscode.postMessage({ type: 'openUsageWeb' }));
   $('enable').addEventListener('change', (e) => vscode.postMessage({ type: 'toggleEnabled', enabled: e.target.checked }));
   $('modeKiro').addEventListener('click', () => vscode.postMessage({ type: 'setMode', mode: 'kiro' }));
-  $('modeOfficial').addEventListener('click', () => vscode.postMessage({ type: 'setMode', mode: 'anthropic' }));
+  $('modeAnthropic').addEventListener('click', () => vscode.postMessage({ type: 'setMode', mode: 'anthropic' }));
+  $('modeOpenAI').addEventListener('click', () => vscode.postMessage({ type: 'setMode', mode: 'openai-responses' }));
 
   function fmtDate(iso) {
     const d = new Date(iso); if (isNaN(d.getTime())) return iso;
@@ -386,22 +389,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (!m.enabled) { b.textContent = '已关闭'; b.className = 'badge badge-off'; }
       else if (!m.hasKey || !m.baseUrl) { b.textContent = '未配置'; b.className = 'badge badge-off'; }
       else { b.textContent = '运行中'; b.className = 'badge badge-on'; }
-      const official = m.mode === 'anthropic';
-      $('modeKiro').className = 'btn ' + (official ? 'btn-ghost' : 'btn-primary');
-      $('modeOfficial').className = 'btn ' + (official ? 'btn-primary' : 'btn-ghost');
-      $('baseUrlLabel').textContent = official ? '官方 Anthropic 地址（默认 sub2api）' : '中转站地址（Anthropic 格式）';
-      $('baseUrl').placeholder = official ? 'https://ai.sunnorthgod.top:2053' : 'https://your-relay.com/v1';
-      $('modeHint').textContent = official
-        ? '把 Kiro 请求翻成纯 Anthropic 直连官方地址（默认 sub2api），不注入 Kiro 私有字段、不显示计费。'
-        : '走 kiro2cc-proxy，保留 Kiro 私有字段 / effort / 思考与计费显示。';
-      show($('usageCard'), !official);
-      show($('cacheCard'), !official);
-      show($('officialNote'), official);
-      if (official) $('officialUrlNote').textContent = m.baseUrl || '';
+      const anthropic = m.mode === 'anthropic';
+      const openai = m.mode === 'openai-responses';
+      const external = anthropic || openai;
+      $('modeKiro').className = 'btn ' + (external ? 'btn-ghost' : 'btn-primary');
+      $('modeAnthropic').className = 'btn ' + (anthropic ? 'btn-primary' : 'btn-ghost');
+      $('modeOpenAI').className = 'btn ' + (openai ? 'btn-primary' : 'btn-ghost');
+      $('baseUrlLabel').textContent = openai ? 'OpenAI Responses 地址' : anthropic ? 'Anthropic Messages 地址' : 'Kiro 中转站地址';
+      $('baseUrl').placeholder = anthropic ? 'https://relay.example/v1' : openai ? 'https://relay.example/v1' : 'https://your-relay.com/v1';
+      $('modeHint').textContent = openai
+        ? 'OpenAI Responses /v1/responses'
+        : anthropic ? 'Anthropic Messages /v1/messages' : 'Kiro 深度兼容';
+      show($('usageCard'), !external);
+      show($('cacheCard'), !external);
+      show($('externalNote'), external);
+      if (external) {
+        $('externalModeNote').textContent = openai ? 'OpenAI Responses' : 'Anthropic Messages';
+        $('externalUrlNote').textContent = m.baseUrl || '';
+      }
       $('baseUrl').value = m.baseUrl || '';
       $('keyHint').textContent = m.hasKey ? '已配置 Key' : '尚未配置 Key';
       $('ports').textContent = 'KRS ' + m.krsPort + ' / CPS ' + m.cpsPort;
-      show($('usageWeb'), !official && !!m.usageWebUrl);
+      show($('usageWeb'), !external && !!m.usageWebUrl);
     } else if (m.type === 'usage') {
       $('refresh').innerHTML = '&#8635;';
       $('refreshCache').innerHTML = '&#8635;';

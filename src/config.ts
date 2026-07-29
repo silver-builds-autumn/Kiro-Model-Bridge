@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { CredentialStore } from "./credentialStore";
 import type { ProviderId } from "./providers/types";
+import { normalizeProviderId, profileKeys, resolveProviderApiUrl } from "./providerProfile";
 
 export const CONFIG_NS = "api2kiro";
 
@@ -89,10 +90,10 @@ export function isEnabled(): boolean {
 }
 
 /** 中转模式：kiro=深度兼容(kiro2cc-proxy)；anthropic=官方 Anthropic 直通(默认 sub2api)。 */
-export function getRelayMode(): "kiro" | "anthropic" {
+export function getRelayMode(): ProviderId {
   const fb = extCtx?.globalState.get<string>(FB_PREFIX + "mode");
   const raw = (fb !== undefined ? fb : cfg().get<string>("mode", "kiro")) || "kiro";
-  return raw === "anthropic" ? "anthropic" : "kiro";
+  return normalizeProviderId(raw);
 }
 
 /** 深度兼容模式的中转站 Key。 */
@@ -106,8 +107,8 @@ export function getOfficialApiKey(): string {
 }
 
 /** 当前生效的 Key（按模式）。 */
-export function getApiKey(): string {
-  return getRelayMode() === "anthropic" ? getOfficialApiKey() : getKiroApiKey();
+export function getApiKey(provider: ProviderId = getRelayMode()): string {
+  return credentials?.get(provider) ?? "";
 }
 
 export async function setApiKey(provider: ProviderId, value: string): Promise<void> {
@@ -160,13 +161,13 @@ export function getMaxRetries(): number {
   return Math.max(0, Math.min(5, Math.floor(raw || 0)));
 }
 
-export function getModelMapping(): Record<string, string> {
-  const key = getRelayMode() === "anthropic" ? "officialModelMapping" : "modelMapping";
+export function getModelMapping(provider: ProviderId = getRelayMode()): Record<string, string> {
+  const key = profileKeys(provider).modelMapping;
   return cfg().get<Record<string, string>>(key, {}) || {};
 }
 
-export function getDefaultModel(): string {
-  const key = getRelayMode() === "anthropic" ? "officialDefaultModel" : "defaultModel";
+export function getDefaultModel(provider: ProviderId = getRelayMode()): string {
+  const key = profileKeys(provider).defaultModel;
   return (cfg().get<string>(key, "") || "").trim();
 }
 
@@ -239,9 +240,20 @@ export function getOfficialBaseUrl(): string {
   return normalizeUrl(readStr("officialBaseUrl") || DEFAULT_OFFICIAL_BASE_URL);
 }
 
+/** OpenAI Responses 模式的中转站地址。 */
+export function getOpenAIBaseUrl(): string {
+  return normalizeUrl(readStr("openaiBaseUrl"));
+}
+
 /** 当前生效的中转站地址（按模式）。 */
-export function getBaseUrl(): string {
-  return getRelayMode() === "anthropic" ? getOfficialBaseUrl() : getKiroBaseUrl();
+export function getBaseUrl(provider: ProviderId = getRelayMode()): string {
+  if (provider === "anthropic") {
+    return getOfficialBaseUrl();
+  }
+  if (provider === "openai-responses") {
+    return getOpenAIBaseUrl();
+  }
+  return getKiroBaseUrl();
 }
 
 /**
@@ -250,15 +262,7 @@ export function getBaseUrl(): string {
  * otherwise we insert /v1.
  */
 export function resolveApiUrl(apiPath: string): string {
-  const base = getBaseUrl();
-  if (!base) {
-    return "";
-  }
-  const p = apiPath.startsWith("/") ? apiPath : "/" + apiPath;
-  if (/\/v\d+$/i.test(base)) {
-    return base + p;
-  }
-  return base + "/v1" + p;
+  return resolveProviderApiUrl(getBaseUrl(), apiPath);
 }
 
 /**

@@ -186,10 +186,11 @@
           "type": "string",
           "enum": [
             "kiro",
-            "anthropic"
+            "anthropic",
+            "openai-responses"
           ],
           "default": "kiro",
-          "description": "中转模式。kiro=深度兼容（走 kiro2cc-proxy，保留 Kiro 私有字段/effort/thinking 与计费显示）；anthropic=官方 Anthropic 直通（把 CW 翻成纯 Anthropic /v1/messages 发往下方官方地址，不注入私有字段、不显示计费）。切换后需重载窗口。"
+          "description": "中转模式。kiro=深度兼容；anthropic=Anthropic Messages /v1/messages；openai-responses=OpenAI Responses /v1/responses。切换后需重载窗口。"
         },
         "api2kiro.officialBaseUrl": {
           "type": "string",
@@ -205,6 +206,21 @@
           "type": "string",
           "default": "",
           "description": "官方模式下映射表未命中时的兜底模型 ID。留空则透传原始 ID。"
+        },
+        "api2kiro.openaiBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI Responses 模式的中转站地址。"
+        },
+        "api2kiro.openaiDefaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI Responses 模式下映射未命中时的兜底模型 ID。"
+        },
+        "api2kiro.openaiModelMapping": {
+          "type": "object",
+          "default": {},
+          "description": "OpenAI Responses 模式下 Kiro 内部模型 ID 到上游模型 ID 的映射。"
         },
         "codewhisperer.config.krsEndpoints": {
           "type": [
