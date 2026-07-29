@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CONFIG_NS, isEnabled, getApiKey, getBaseUrl, getPort, getCpsPort, initConfig, updateSetting } from "./config";
+import { CONFIG_NS, isEnabled, getApiKey, getBaseUrl, getPort, getCpsPort, initConfig, updateSetting, setApiKey, getRelayMode } from "./config";
 import { initLog, showLog, info, error } from "./log";
 import { KrsProxyServer } from "./krsServer";
 import { CpsProxyServer } from "./cpsServer";
@@ -16,7 +16,7 @@ let reloadPrompted = false;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   initLog();
-  initConfig(context);
+  await initConfig(context);
   info("activating, version", context.extension.packageJSON.version);
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -227,7 +227,11 @@ function registerCommands(context: vscode.ExtensionContext): void {
         ignoreFocusOut: true,
       });
       if (value !== undefined) {
-        warnIfFailed(await updateSetting("apiKey", value.trim()));
+        try {
+          await setApiKey(getRelayMode(), value.trim());
+        } catch (e) {
+          void vscode.window.showErrorMessage("API2Kiro 保存 API Key 失败：" + ((e as Error).message || String(e)));
+        }
         sidebar?.postAll();
       }
     })

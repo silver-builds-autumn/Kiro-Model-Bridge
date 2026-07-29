@@ -1,12 +1,23 @@
 import * as vscode from "vscode";
+import { CredentialStore } from "./credentialStore";
+import type { ProviderId } from "./providers/types";
 
 export const CONFIG_NS = "api2kiro";
 
 let extCtx: vscode.ExtensionContext | undefined;
+let credentials: CredentialStore | undefined;
 
-/** 由 activate 调用,注入扩展上下文,启用「settings.json 写入失败时」的本地兜底存储。 */
-export function initConfig(context: vscode.ExtensionContext): void {
+/** 注入扩展上下文，并在继续激活前完成旧明文 Key 的安全迁移。 */
+export async function initConfig(context: vscode.ExtensionContext): Promise<void> {
   extCtx = context;
+  credentials = new CredentialStore(context.secrets, {
+    get: (key) => readStr(key),
+    clear: async (key) => {
+      await cfg().update(key, undefined, vscode.ConfigurationTarget.Global);
+      await context.globalState.update(FB_PREFIX + key, undefined);
+    },
+  });
+  await credentials.initialize();
 }
 
 export function cfg() {
@@ -86,17 +97,31 @@ export function getRelayMode(): "kiro" | "anthropic" {
 
 /** 深度兼容模式的中转站 Key。 */
 export function getKiroApiKey(): string {
-  return readStr("apiKey");
+  return credentials?.get("kiro") ?? "";
 }
 
 /** 官方 Anthropic 模式的 Key。 */
 export function getOfficialApiKey(): string {
-  return readStr("officialApiKey");
+  return credentials?.get("anthropic") ?? "";
 }
 
 /** 当前生效的 Key（按模式）。 */
 export function getApiKey(): string {
   return getRelayMode() === "anthropic" ? getOfficialApiKey() : getKiroApiKey();
+}
+
+export async function setApiKey(provider: ProviderId, value: string): Promise<void> {
+  if (!credentials) {
+    throw new Error("凭据仓库尚未初始化");
+  }
+  await credentials.set(provider, value.trim());
+}
+
+export async function clearApiKey(provider: ProviderId): Promise<void> {
+  if (!credentials) {
+    throw new Error("凭据仓库尚未初始化");
+  }
+  await credentials.clear(provider);
 }
 
 export function getPort(): number {

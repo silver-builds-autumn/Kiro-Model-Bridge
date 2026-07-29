@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { getApiKey, getBaseUrl, isEnabled, resolveRootUrl, updateSetting, getRelayMode } from "./config";
-import { maskKey, error } from "./log";
+import { clearApiKey, getApiKey, getBaseUrl, isEnabled, resolveRootUrl, setApiKey, updateSetting, getRelayMode } from "./config";
+import { error } from "./log";
 import { fetchRelayUsage } from "./usage";
 import { fetchRelayModels } from "./modelStore";
 
@@ -50,18 +50,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case "saveConfig": {
         const official = getRelayMode() === "anthropic";
         const urlKey = official ? "officialBaseUrl" : "baseUrl";
-        const keyKey = official ? "officialApiKey" : "apiKey";
         const baseUrl = String(msg.baseUrl ?? "").trim();
         const apiKey = String(msg.apiKey ?? "").trim();
         const r1 = await updateSetting(urlKey, baseUrl);
-        let r2: { settingsOk: boolean; error?: string } = { settingsOk: true };
+        let keyError = "";
         if (apiKey) {
-          r2 = await updateSetting(keyKey, apiKey);
+          try {
+            await setApiKey(getRelayMode(), apiKey);
+          } catch (e) {
+            keyError = (e as Error).message || String(e);
+          }
         }
-        if (r1.settingsOk && r2.settingsOk) {
+        if (r1.settingsOk && !keyError) {
           this.toast("ok", "已保存配置");
+        } else if (keyError) {
+          error("API Key 保存到 SecretStorage 失败:", keyError);
+          this.toast("error", "API Key 保存失败:" + keyError);
         } else {
-          const detail = r1.error || r2.error || "未知错误";
+          const detail = r1.error || "未知错误";
           error("配置未写入 Kiro 设置,已用本地兜底:", detail);
           this.toast("error", "已本地保存并生效;但未写入 Kiro 设置:" + detail);
         }
@@ -70,9 +76,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       }
       case "clearKey": {
-        const keyKey = getRelayMode() === "anthropic" ? "officialApiKey" : "apiKey";
-        const r = await updateSetting(keyKey, "");
-        this.toast(r.settingsOk ? "ok" : "error", r.settingsOk ? "已清除 API Key" : "清除失败:" + (r.error || "未知错误"));
+        try {
+          await clearApiKey(getRelayMode());
+          this.toast("ok", "已清除 API Key");
+        } catch (e) {
+          this.toast("error", "清除失败:" + ((e as Error).message || String(e)));
+        }
         this.postState();
         break;
       }
@@ -124,7 +133,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       enabled: isEnabled(),
       mode: getRelayMode(),
       hasKey: !!key,
-      maskedKey: maskKey(key),
       baseUrl: getBaseUrl(),
       krsPort: ports.krsPort,
       cpsPort: ports.cpsPort,
@@ -391,7 +399,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       show($('officialNote'), official);
       if (official) $('officialUrlNote').textContent = m.baseUrl || '';
       $('baseUrl').value = m.baseUrl || '';
-      $('keyHint').textContent = m.hasKey ? ('已配置 Key：' + m.maskedKey) : '尚未配置 Key';
+      $('keyHint').textContent = m.hasKey ? '已配置 Key' : '尚未配置 Key';
       $('ports').textContent = 'KRS ' + m.krsPort + ' / CPS ' + m.cpsPort;
       show($('usageWeb'), !official && !!m.usageWebUrl);
     } else if (m.type === 'usage') {
