@@ -3,3 +3,4 @@ config.json
 # CA 私钥与签发缓存
 .data/
 node_modules/
+.worktrees/
