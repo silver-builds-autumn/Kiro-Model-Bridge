@@ -33,6 +33,12 @@ export interface ProviderDeps {
   getMaxTokens(): number;
   getEffort(request: CwRequest): Promise<ProviderEffort | undefined>;
   getReasoningMode(request: CwRequest): string | undefined;
+  getThinkingConfig?(): {
+    type: "enabled" | "disabled";
+    budget_tokens?: number;
+  } | undefined;
+  getThinkingBudget?(): number;
+  getEffortMode?(): "off" | "modelVariant" | "thinkingBudget" | "auto";
 }
 
 export interface ProviderAdapter {

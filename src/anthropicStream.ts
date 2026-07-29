@@ -76,6 +76,9 @@ interface AnthropicSseEvent {
  * capture exposed for local cache-hit-rate statistics.
  */
 export class AnthropicStreamConverter {
+  public committed = false;
+  public readonly terminalError: string | undefined = undefined;
+
   private conversationId: string;
   private modelId: string;
 
@@ -114,7 +117,13 @@ export class AnthropicStreamConverter {
       return [];
     }
     try {
-      return this.handleEvent(JSON.parse(payload));
+      const events = this.handleEvent(JSON.parse(payload));
+      if (events.some((event) =>
+        event.assistantResponseEvent || event.reasoningContentEvent || event.toolUseEvent
+      )) {
+        this.committed = true;
+      }
+      return events;
     } catch {
       return [];
     }
@@ -255,6 +264,9 @@ export class AnthropicStreamConverter {
     if (this.pendingContextPct !== null) {
       out.push({ contextUsageEvent: { contextUsagePercentage: this.pendingContextPct } });
       this.pendingContextPct = null;
+    }
+    if (out.some((event) => event.toolUseEvent)) {
+      this.committed = true;
     }
     return out;
   }

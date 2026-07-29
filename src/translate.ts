@@ -4,16 +4,9 @@ import {
   CwToolSpec,
   CwUserInputMessage,
 } from "./cwTypes";
-import {
-  getDefaultModel,
-  getMaxTokens,
-  getModelMapping,
-  getThinkingConfig,
-  getThinkingBudget,
-  ThinkingConfig,
-} from "./config";
-import { hasEffortVariant, thinkingVariantOf, EffortLevel } from "./modelStore";
-import { budgetForEffort, getEffortMode } from "./effort";
+import type { ThinkingConfig } from "./config";
+import type { EffortLevel } from "./modelStore";
+import type { EffortMode } from "./effort";
 
 const DEFAULT_MODEL_ID = "CLAUDE_SONNET_4_20250514_V1_0";
 
@@ -92,11 +85,12 @@ export function conversationId(req: CwRequest): string {
 
 /** Map a Kiro internal model ID to the upstream model ID. */
 export function resolveModel(kiroModelId: string): string {
-  const mapping = getModelMapping();
+  const config = require("./config") as typeof import("./config");
+  const mapping = config.getModelMapping();
   if (mapping[kiroModelId]) {
     return mapping[kiroModelId];
   }
-  const def = getDefaultModel();
+  const def = config.getDefaultModel();
   if (def) {
     return def;
   }
@@ -210,7 +204,17 @@ function buildUserText(msg: CwUserInputMessage): string {
  * Build an Anthropic /v1/messages request body from Kiro's CodeWhisperer
  * request. Ports the reference plugin's `buildAnthropicRequest`.
  */
-export function buildAnthropicRequest(req: CwRequest): AnthropicRequest {
+export interface AnthropicBuildOptions {
+  model: string;
+  maxTokens: number;
+  thinking?: ThinkingConfig;
+  thinkingBudget?: number;
+}
+
+export function buildAnthropicRequest(
+  req: CwRequest,
+  options?: AnthropicBuildOptions,
+): AnthropicRequest {
   const state = req.conversationState;
   const items = [...(state.history || [])];
   if (state.currentMessage) {
@@ -305,13 +309,17 @@ export function buildAnthropicRequest(req: CwRequest): AnthropicRequest {
     }
   }
 
-  const model = resolveModel(latestModelId(req));
-  const maxTokens = getMaxTokens();
+  const config = options ? undefined : require("./config") as typeof import("./config");
+  const model = options?.model ?? resolveModel(latestModelId(req));
+  const maxTokens = options?.maxTokens ?? config!.getMaxTokens();
 
   const looksThinking = /thinking/i.test(model);
-  let thinking = getThinkingConfig();
+  let thinking = options ? options.thinking : config!.getThinkingConfig();
   if (looksThinking && thinking?.type !== "disabled") {
-    thinking = { type: "enabled", budget_tokens: getThinkingBudget() };
+    thinking = {
+      type: "enabled",
+      budget_tokens: options?.thinkingBudget ?? config!.getThinkingBudget(),
+    };
   }
 
   const body: AnthropicRequest = {
@@ -365,14 +373,17 @@ export function setThinkingBudget(body: AnthropicRequest, budget: number): void 
 export function applyEffort(
   body: AnthropicRequest,
   effort: EffortLevel | undefined,
-  reasoningMode?: string
+  reasoningMode?: string,
+  effortMode?: EffortMode,
 ): void {
   if (!effort) {
     // Kiro 未给 effort（auto 档 / 老版本）→ 不加任何字段，让模型走默认，
     // 与 Kiro 原生 We7() 返回 undefined 的行为一致。
     return;
   }
-  const mode = getEffortMode();
+  const modelRuntime = require("./modelStore") as typeof import("./modelStore");
+  const mode = effortMode ??
+    (require("./effort") as typeof import("./effort")).getEffortMode();
   if (mode === "off") {
     return;
   }
@@ -384,15 +395,18 @@ export function applyEffort(
 
   // 变体模式（可选）：部分中转站用独立的 <model>-<effort> / -thinking 模型承载思考。
   if (mode === "auto" || mode === "modelVariant") {
-    if (hasEffortVariant(body.model, effort)) {
+    if (modelRuntime.hasEffortVariant(body.model, effort)) {
       body.model = `${body.model}-${effort}`;
       return;
     }
     if (mode === "modelVariant") {
-      const tv = thinkingVariantOf(body.model);
+      const tv = modelRuntime.thinkingVariantOf(body.model);
       if (tv) {
         body.model = tv;
-        setThinkingBudget(body, budgetForEffort(effort));
+        setThinkingBudget(
+          body,
+          (require("./effort") as typeof import("./effort")).budgetForEffort(effort),
+        );
       }
       return;
     }
@@ -402,6 +416,9 @@ export function applyEffort(
   // 把 effort 换算成固定预算。默认 auto 模式**不走这里**——纯透传 output_config，
   // 与 Kiro 官方完全一致。
   if (mode === "thinkingBudget") {
-    setThinkingBudget(body, budgetForEffort(effort));
+    setThinkingBudget(
+      body,
+      (require("./effort") as typeof import("./effort")).budgetForEffort(effort),
+    );
   }
 }
