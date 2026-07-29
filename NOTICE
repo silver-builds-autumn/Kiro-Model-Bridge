@@ -1,0 +1,6 @@
+This repository contains a derivative build of API2Kiro.
+Upstream: https://github.com/SunNorthGod/API2Kiro
+Upstream license: MIT
+Derivative maintenance: https://github.com/silver-builds-autumn/Kiro-Model-Bridge
+The api2kiro publisher/name values are retained only for local VSIX upgrade compatibility.
+This derivative is not an upstream Marketplace release.
