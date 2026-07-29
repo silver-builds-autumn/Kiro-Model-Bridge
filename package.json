@@ -189,7 +189,10 @@
         },
         "api2kiro.mode": {
           "type": "string",
-          "enum": ["kiro", "anthropic"],
+          "enum": [
+            "kiro",
+            "anthropic"
+          ],
           "default": "kiro",
           "description": "中转模式。kiro=深度兼容（走 kiro2cc-proxy，保留 Kiro 私有字段/effort/thinking 与计费显示）；anthropic=官方 Anthropic 直通（把 CW 翻成纯 Anthropic /v1/messages 发往下方官方地址，不注入私有字段、不显示计费）。切换后需重载窗口。"
         },
@@ -243,12 +246,15 @@
   "scripts": {
     "compile": "tsc -p ./tsconfig.json --noEmit",
     "bundle": "node esbuild.js",
-    "package": "node esbuild.js && npx @vscode/vsce package --allow-star-activation --skip-license --allow-missing-repository --no-dependencies"
+    "package": "node esbuild.js && npx @vscode/vsce package --allow-star-activation --skip-license --allow-missing-repository --no-dependencies",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "test:unit": "tsx --test \"test/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.23.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.5.0"
   }
 }
