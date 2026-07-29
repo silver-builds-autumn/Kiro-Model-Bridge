@@ -1,6 +1,5 @@
-import { getApiKey, resolveApiUrl, getRelayMode } from "./config";
-import { requestUpstream, readBody } from "./upstream";
-import { debug, error } from "./log";
+import { resolveProviderApiUrl } from "./providerProfile";
+import type { ProviderId } from "./providers/types";
 
 export interface RelayModel {
   id: string;
@@ -20,6 +19,18 @@ export interface RelayModel {
   /** 最大输出 token（中转站透出，用于 CPS 模型列表 tokenLimits）。 */
   maxOutputTokens?: number;
 }
+
+export interface ModelDiscoveryProfile {
+  provider: ProviderId;
+  baseUrl: string;
+  apiKey: string;
+  fallbackModels: RelayModel[];
+}
+
+export type GetJson = (
+  url: string,
+  headers: Record<string, string>,
+) => Promise<unknown>;
 
 export interface EffortGroup {
   baseId: string;
@@ -46,10 +57,44 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 export const DEFAULT_EFFORT_LEVEL: EffortLevel = "high";
 export const EFFORT_SUFFIX_RE = /-(low|medium|high|xhigh|max)$/i;
 
-let modelCache: RelayModel[] = [];
-let modelCacheTime = 0;
-let modelCacheMode = "";
 const MODEL_TTL_MS = 60000;
+
+export class ModelCache {
+  private readonly entries = new Map<string, { models: RelayModel[]; savedAt: number }>();
+
+  constructor(private readonly ttlMs = MODEL_TTL_MS) {}
+
+  set(key: string, models: RelayModel[]): void {
+    this.entries.set(key, { models, savedAt: Date.now() });
+  }
+
+  get(key: string): RelayModel[] | undefined {
+    const entry = this.entries.get(key);
+    if (!entry || Date.now() - entry.savedAt >= this.ttlMs) {
+      return undefined;
+    }
+    return entry.models;
+  }
+}
+
+const modelCache = new ModelCache();
+const modelErrors = new Map<ProviderId, string>();
+let activeModels: RelayModel[] = [];
+
+export function modelHeaders(provider: ProviderId, apiKey: string): Record<string, string> {
+  if (provider === "openai-responses") {
+    return { Authorization: `Bearer ${apiKey}` };
+  }
+  return {
+    "x-api-key": apiKey,
+    Authorization: `Bearer ${apiKey}`,
+    "anthropic-version": "2023-06-01",
+  };
+}
+
+export function modelCacheKey(provider: ProviderId, baseUrl: string): string {
+  return `${provider}|${baseUrl.trim().replace(/\/+$/, "")}`;
+}
 
 function parseContextWindow(m: Record<string, unknown>): number {
   const raw =
@@ -63,118 +108,156 @@ function parseContextWindow(m: Record<string, unknown>): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Fetch and normalize the relay's model list (cached for 60s). */
-export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
-  const now = Date.now();
-  const mode = getRelayMode();
-  if (!force && modelCache.length > 0 && modelCacheMode === mode && now - modelCacheTime < MODEL_TTL_MS) {
-    return modelCache;
-  }
-  const apiKey = getApiKey();
-  const url = resolveApiUrl("/models");
-  if (!apiKey || !url) {
-    return modelCache;
+function normalizeRelayModels(raw: unknown): RelayModel[] {
+  const record = raw && typeof raw === "object" ? raw as { data?: unknown[]; models?: unknown[] } : {};
+  const arr: unknown[] = Array.isArray(record.data)
+    ? record.data
+    : Array.isArray(record.models)
+      ? record.models
+      : Array.isArray(raw)
+        ? raw
+        : [];
+
+  return arr
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    .filter((x) => x.id || x.modelId)
+    .map((x) => {
+      const id = String(x.id || x.modelId);
+      const effortLevels = Array.isArray(x.effort_levels)
+        ? x.effort_levels.filter((e): e is string => typeof e === "string")
+        : Array.isArray(x.effortLevels)
+          ? x.effortLevels.filter((e): e is string => typeof e === "string")
+          : undefined;
+      const reasoningModes = Array.isArray(x.reasoning_modes)
+        ? x.reasoning_modes.filter((e): e is string => typeof e === "string")
+        : Array.isArray(x.reasoningModes)
+          ? x.reasoningModes.filter((e): e is string => typeof e === "string")
+          : undefined;
+      const maxOutRaw = x.max_tokens ?? x.max_output_tokens ?? x.maxOutputTokens;
+      const maxOutputTokens = Number.isFinite(Number(maxOutRaw)) && Number(maxOutRaw) > 0
+        ? Number(maxOutRaw)
+        : undefined;
+      return {
+        id,
+        name: String(x.display_name || x.name || x.modelName || id),
+        contextWindow: parseContextWindow(x),
+        description: typeof x.description === "string" ? x.description : undefined,
+        effortLevels: effortLevels && effortLevels.length > 0 ? effortLevels : undefined,
+        effortSchemaPath: typeof x.effort_schema_path === "string"
+          ? x.effort_schema_path
+          : typeof x.effortSchemaPath === "string" ? x.effortSchemaPath : undefined,
+        defaultEffortLevel: typeof x.default_effort_level === "string"
+          ? x.default_effort_level
+          : typeof x.defaultEffortLevel === "string" ? x.defaultEffortLevel : undefined,
+        reasoningModes: reasoningModes && reasoningModes.length > 0 ? reasoningModes : undefined,
+        defaultReasoningMode: typeof x.default_reasoning_mode === "string"
+          ? x.default_reasoning_mode
+          : typeof x.defaultReasoningMode === "string" ? x.defaultReasoningMode : undefined,
+        maxOutputTokens,
+      };
+    });
+}
+
+export async function fetchModelsForProfile(
+  profile: ModelDiscoveryProfile,
+  getJson: GetJson,
+  onError?: (error: Error) => void,
+): Promise<RelayModel[]> {
+  const url = resolveProviderApiUrl(profile.baseUrl, "/models");
+  if (!url || !profile.apiKey) {
+    return profile.fallbackModels;
   }
   try {
-    const res = await requestUpstream(
-      "GET",
-      url,
-      {
-        "x-api-key": apiKey,
-        Authorization: "Bearer " + apiKey,
-        "anthropic-version": "2023-06-01",
-        Accept: "application/json",
-      },
-      undefined,
-      15000
-    );
-    const text = await readBody(res.body);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw new Error(`HTTP ${res.statusCode}: ${text.slice(0, 200)}`);
-    }
-    const raw = JSON.parse(text) as { data?: unknown[]; models?: unknown[] } | unknown[];
-
-    const arr: unknown[] = Array.isArray((raw as { data?: unknown[] }).data)
-      ? (raw as { data: unknown[] }).data
-      : Array.isArray((raw as { models?: unknown[] }).models)
-      ? (raw as { models: unknown[] }).models
-      : Array.isArray(raw)
-      ? (raw as unknown[])
-      : [];
-
-    const models = arr
-      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
-      .filter((x) => x.id || x.modelId)
-      .map((x) => {
-        const id = String(x.id || x.modelId);
-        const effortLevels = Array.isArray(x.effort_levels)
-          ? (x.effort_levels as unknown[]).filter((e): e is string => typeof e === "string")
-          : Array.isArray((x as { effortLevels?: unknown }).effortLevels)
-          ? ((x as { effortLevels: unknown[] }).effortLevels).filter(
-              (e): e is string => typeof e === "string"
-            )
-          : undefined;
-        const effortSchemaPath =
-          typeof x.effort_schema_path === "string"
-            ? (x.effort_schema_path as string)
-            : typeof (x as { effortSchemaPath?: unknown }).effortSchemaPath === "string"
-            ? ((x as { effortSchemaPath: string }).effortSchemaPath)
-            : undefined;
-        const defaultEffortLevel =
-          typeof x.default_effort_level === "string"
-            ? (x.default_effort_level as string)
-            : typeof (x as { defaultEffortLevel?: unknown }).defaultEffortLevel === "string"
-            ? ((x as { defaultEffortLevel: string }).defaultEffortLevel)
-            : undefined;
-        const reasoningModes = Array.isArray(x.reasoning_modes)
-          ? (x.reasoning_modes as unknown[]).filter((e): e is string => typeof e === "string")
-          : Array.isArray((x as { reasoningModes?: unknown }).reasoningModes)
-          ? ((x as { reasoningModes: unknown[] }).reasoningModes).filter(
-              (e): e is string => typeof e === "string"
-            )
-          : undefined;
-        const defaultReasoningMode =
-          typeof x.default_reasoning_mode === "string"
-            ? (x.default_reasoning_mode as string)
-            : typeof (x as { defaultReasoningMode?: unknown }).defaultReasoningMode === "string"
-            ? ((x as { defaultReasoningMode: string }).defaultReasoningMode)
-            : undefined;
-        const maxOutRaw =
-          (x.max_tokens as number) ??
-          (x.max_output_tokens as number) ??
-          (x.maxOutputTokens as number);
-        const maxOutputTokens =
-          Number.isFinite(Number(maxOutRaw)) && Number(maxOutRaw) > 0
-            ? Number(maxOutRaw)
-            : undefined;
-        return {
-          id,
-          name: String(x.display_name || x.name || x.modelName || id),
-          contextWindow: parseContextWindow(x),
-          description: typeof x.description === "string" ? x.description : undefined,
-          effortLevels: effortLevels && effortLevels.length > 0 ? effortLevels : undefined,
-          effortSchemaPath,
-          defaultEffortLevel,
-          reasoningModes: reasoningModes && reasoningModes.length > 0 ? reasoningModes : undefined,
-          defaultReasoningMode,
-          maxOutputTokens,
-        } as RelayModel;
-      });
-
-    if (models.length > 0) {
-      modelCache = models;
-      modelCacheTime = Date.now();
-      modelCacheMode = mode;
-    }
-    debug("relay models fetched", { count: models.length });
+    const raw = await getJson(url, modelHeaders(profile.provider, profile.apiKey));
+    const models = normalizeRelayModels(raw);
+    return models.length > 0 ? models : profile.fallbackModels;
   } catch (e) {
-    error("/models fetch failed:", (e as Error).message);
+    const error = e instanceof Error ? e : new Error(String(e));
+    onError?.(error);
+    return profile.fallbackModels;
   }
-  return modelCache;
+}
+
+function fallbackModels(defaultModel: string, mapping: Record<string, string>): RelayModel[] {
+  const ids = [...Object.values(mapping), defaultModel]
+    .map((id) => String(id || "").trim())
+    .filter((id, index, all) => !!id && all.indexOf(id) === index);
+  return ids.map((id) => ({ id, name: id, contextWindow: 0 }));
+}
+
+/** Fetch and normalize the relay's model list (cached for 60s). */
+export async function fetchRelayModels(force = false): Promise<RelayModel[]> {
+  const config = require("./config") as typeof import("./config");
+  const provider = config.getRelayMode();
+  const baseUrl = config.getBaseUrl(provider);
+  const key = modelCacheKey(provider, baseUrl);
+  const cached = !force ? modelCache.get(key) : undefined;
+  if (cached) {
+    activeModels = cached;
+    return cached;
+  }
+  const fallback = fallbackModels(
+    config.getDefaultModel(provider),
+    config.getModelMapping(provider),
+  );
+  const apiKey = config.getApiKey(provider);
+  if (!apiKey || !baseUrl) {
+    activeModels = fallback;
+    return fallback;
+  }
+  try {
+    const upstream = require("./upstream") as typeof import("./upstream");
+    let discoveryError: Error | undefined;
+    const models = await fetchModelsForProfile(
+      { provider, baseUrl, apiKey, fallbackModels: fallback },
+      async (url, headers) => {
+        const res = await upstream.requestUpstream(
+          "GET",
+          url,
+          { ...headers, Accept: "application/json" },
+          undefined,
+          15000,
+        );
+        const text = await upstream.readBody(res.body);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw new Error(`HTTP ${res.statusCode}: ${text.slice(0, 200)}`);
+        }
+        return JSON.parse(text) as unknown;
+      },
+      (error) => { discoveryError = error; },
+    );
+    if (discoveryError) {
+      const message = discoveryError.message;
+      modelErrors.set(provider, message);
+      activeModels = fallback;
+      const log = require("./log") as typeof import("./log");
+      log.error("/models fetch failed:", message);
+      return fallback;
+    }
+    if (models.length > 0) {
+      modelCache.set(key, models);
+    }
+    activeModels = models;
+    modelErrors.delete(provider);
+    const log = require("./log") as typeof import("./log");
+    log.debug("relay models fetched", { count: models.length, provider });
+    return models;
+  } catch (e) {
+    const message = (e as Error).message || String(e);
+    modelErrors.set(provider, message);
+    activeModels = fallback;
+    const log = require("./log") as typeof import("./log");
+    log.error("/models fetch failed:", message);
+    return fallback;
+  }
 }
 
 export function getCachedModels(): RelayModel[] {
-  return modelCache;
+  return activeModels;
+}
+
+export function getLastModelError(provider: ProviderId): string | undefined {
+  return modelErrors.get(provider);
 }
 
 /** True if the relay exposes an effort-suffixed variant of `base` (e.g. base-high). */
@@ -185,11 +268,11 @@ export function hasEffortVariant(base: string, effort: string): boolean {
     return false;
   }
   const target = (b + "-" + e).toLowerCase();
-  return modelCache.some((m) => m.id.toLowerCase() === target);
+  return activeModels.some((m) => m.id.toLowerCase() === target);
 }
 
 export function contextWindowForModel(id: string): number | undefined {
-  return modelCache.find((m) => m.id === id)?.contextWindow;
+  return activeModels.find((m) => m.id === id)?.contextWindow;
 }
 
 /**
@@ -204,7 +287,7 @@ export function thinkingVariantOf(base: string): string | undefined {
     return undefined;
   }
   const target = b + "-thinking";
-  const hit = modelCache.find((m) => m.id.toLowerCase() === target);
+  const hit = activeModels.find((m) => m.id.toLowerCase() === target);
   return hit?.id;
 }
 

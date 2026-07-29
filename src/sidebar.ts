@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { clearApiKey, getApiKey, getBaseUrl, isEnabled, resolveRootUrl, setApiKey, updateSetting, getRelayMode } from "./config";
 import { error } from "./log";
 import { fetchRelayUsage } from "./usage";
-import { fetchRelayModels } from "./modelStore";
+import { fetchRelayModels, getLastModelError } from "./modelStore";
 import { normalizeProviderId, profileKeys } from "./providerProfile";
 
 export interface PortInfo {
@@ -149,8 +149,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
     fetchRelayModels(true)
-      .then((models) => this.post({ type: "models", count: Array.isArray(models) ? models.length : null }))
-      .catch(() => this.post({ type: "models", count: null }));
+      .then((models) => this.post({
+        type: "models",
+        count: Array.isArray(models) ? models.length : null,
+        errorMessage: getLastModelError(getRelayMode()),
+      }))
+      .catch((e) => this.post({ type: "models", count: null, errorMessage: (e as Error).message }));
 
     if (getRelayMode() !== "kiro") {
       // 外部标准协议模式不查 kiro2cc 计费。
@@ -474,7 +478,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         wrap.appendChild(div);
       }
     } else if (m.type === 'models') {
-      $('modelCount').textContent = (m.count == null ? '--' : m.count);
+      $('modelCount').textContent = m.errorMessage
+        ? ('兜底 ' + (m.count == null ? 0 : m.count))
+        : (m.count == null ? '--' : m.count);
+      $('modelCount').title = m.errorMessage || '';
     } else if (m.type === 'toast') {
       toast(m.level, m.message);
     }
