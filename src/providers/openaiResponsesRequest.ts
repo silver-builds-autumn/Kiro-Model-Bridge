@@ -1,11 +1,13 @@
 import type {
   AnthropicJsonSchema,
+  CwAssistantResponseMessage,
   CwRequest,
   CwToolResult,
   CwToolSpec,
   CwUserInputMessage,
 } from "../cwTypes";
 import type { ProviderEffort } from "./types";
+import { decodeReasoningEnvelope } from "./reasoningEnvelope";
 
 export interface OpenAIResponsesBuildOptions {
   model: string;
@@ -131,6 +133,14 @@ function serializeToolArguments(input: unknown): string {
   }
 }
 
+function reasoningSignature(message: CwAssistantResponseMessage): string | undefined {
+  const content = message.reasoningContent;
+  if (content && typeof content === "object") {
+    return content.reasoningText?.signature ?? message.reasoningSignature;
+  }
+  return message.reasoningSignature;
+}
+
 /** 将 Kiro 会话历史转换为 OpenAI Responses 的原生 input items。 */
 export function buildOpenAIResponsesRequest(
   request: CwRequest,
@@ -168,7 +178,15 @@ export function buildOpenAIResponsesRequest(
         }],
       });
     }
-    for (const call of assistant?.toolUses ?? []) {
+    const toolUses = assistant?.toolUses ?? [];
+    if (assistant && toolUses.length > 0) {
+      const signature = reasoningSignature(assistant);
+      const reasoning = signature ? decodeReasoningEnvelope(signature) : undefined;
+      if (reasoning) {
+        input.push(reasoning);
+      }
+    }
+    for (const call of toolUses) {
       input.push({
         type: "function_call",
         call_id: call.toolUseId,

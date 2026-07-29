@@ -5,6 +5,7 @@ import {
   buildOpenAIResponsesRequest,
   normalizeOpenAIEffort,
 } from "../src/providers/openaiResponsesRequest";
+import { encodeReasoningEnvelope } from "../src/providers/reasoningEnvelope";
 
 test("完整 Responses 请求保留历史、工具调用结果、图片和当前消息", () => {
   const request: CwRequest = {
@@ -189,4 +190,54 @@ test("Responses 请求兼容顶层工具定义和字符串工具参数", () => {
     body.input.find((item) => item.type === "function_call")?.arguments,
     '{"path":"a.ts"}',
   );
+});
+
+test("完整 Responses 请求仅在工具调用前回放 GPT reasoning 信封", () => {
+  const reasoning = {
+    type: "reasoning",
+    id: "rs_1",
+    encrypted_content: "cipher",
+    summary: [{ type: "summary_text", text: "inspect" }],
+  } as const;
+  const body = buildOpenAIResponsesRequest({
+    conversationState: {
+      history: [
+        {
+          assistantResponseMessage: {
+            reasoningContent: {
+              reasoningText: {
+                text: "inspect",
+                signature: encodeReasoningEnvelope(reasoning),
+              },
+            },
+            toolUses: [{ toolUseId: "call-1", name: "read_file", input: {} }],
+          },
+        },
+        {
+          assistantResponseMessage: {
+            reasoningContent: {
+              reasoningText: { text: "claude", signature: "signed-thinking" },
+            },
+            toolUses: [{ toolUseId: "call-2", name: "other", input: {} }],
+          },
+        },
+        {
+          assistantResponseMessage: {
+            reasoningContent: "unsigned reasoning",
+            toolUses: [{ toolUseId: "call-3", name: "last", input: {} }],
+          },
+        },
+      ],
+      currentMessage: { userInputMessage: { content: "continue" } },
+    },
+  }, {
+    model: "gpt-test",
+    maxOutputTokens: 1024,
+  });
+
+  const reasoningItems = body.input.filter((item) => item.type === "reasoning");
+  assert.deepEqual(reasoningItems, [reasoning]);
+  const reasoningIndex = body.input.indexOf(reasoningItems[0]);
+  assert.equal(body.input[reasoningIndex + 1]?.type, "function_call");
+  assert.equal(body.input[reasoningIndex + 1]?.call_id, "call-1");
 });
