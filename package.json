@@ -254,7 +254,8 @@
     "bundle": "node esbuild.js",
     "package": "node esbuild.js && npx @vscode/vsce package --allow-star-activation --skip-license --allow-missing-repository --no-dependencies",
     "test": "tsx --test \"test/**/*.test.ts\"",
-    "test:unit": "tsx --test \"test/*.test.ts\""
+    "test:unit": "tsx --test \"test/*.test.ts\"",
+    "scan:secrets": "pwsh -NoProfile -File scripts/scan-secrets.ps1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

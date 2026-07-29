@@ -1,72 +1,77 @@
 [English](./README.md) | 简体中文
 
-# API2Kiro
+# API2Kiro 多 Provider 衍生版
 
-把 **Anthropic 端点格式**的中转站 API 接入 [Kiro](https://kiro.dev)：自定义中转地址与 Key、查询用量、监控缓存命中率，并支持多窗口同时使用。
+这个本地 VSIX 可把 [Kiro](https://kiro.dev) 接入 Kiro 兼容、Anthropic Messages 或 OpenAI Responses 中转站，同时保留 Kiro 需要的 AWS event-stream 接口。
 
-> 仅用于学习与互操作研究。上游/网络返回内容应视为不可信数据处理。
+> 安全提醒：任何曾发布在聊天、Issue、日志或截图里的 API Key 都必须先撤销并轮换。安装后只通过本地侧边栏输入新 Key。
 
 <p align="center">
   <img src="./assets/panel.png" alt="API2Kiro 控制面板" width="360">
 </p>
 
-## 功能
+## Provider 模式
 
-- **接入自建/中转 Anthropic API**：在本地起代理，把 Kiro 的 AI 请求重定向到你配置的中转站（`/v1/messages`）。
-- **可视化控制面板**：侧边栏填写中转站地址与 API Key，一键启用/关闭。
-- **用量查询**：直接在面板显示中转站的真实用量（请求数、输入/输出 token、费用、按模型分组），无需打开网页。
-- **缓存命中率**：从中转站请求明细聚合出权威的 prompt 缓存命中率。
-- **思考档位**：支持 Kiro 的 max/xhigh/high/medium/low 档位，映射为思考预算或对应的模型变体。
-- **多窗口共享**：多个 Kiro 窗口共用同一本地代理，先启动的作为主实例服务所有窗口，退出后其余窗口自动接管。
+| 模式 | 上游端点 | 认证方式 |
+| --- | --- | --- |
+| `kiro` | `/v1/messages` | Kiro 兼容的 Anthropic 请求头 |
+| `anthropic` | `/v1/messages` | Anthropic 请求头及 Bearer 兼容认证 |
+| `openai-responses` | `/v1/responses` | 仅 Bearer |
 
-## 工作原理
+三种模式各自保存独立 Profile：API Key、中转地址、默认模型、模型映射和模型发现缓存不会串用。Key 保存在 VS Code/Kiro `SecretStorage`，不写入扩展设置；旧版明文值只有在 SecretStorage 写入并精确回读成功后才清除。
 
-Kiro 通过 `codewhisperer.config.*Endpoints` 配置决定 AI 请求发往哪里。本扩展在 `127.0.0.1` 上启动两个本地服务：
+## 运行行为
 
-- **KRS（运行时，默认 19800）**：接收 Kiro 的 `generateAssistantResponse` 请求（CodeWhisperer 格式），翻译成 Anthropic Messages API 转发到中转站，再把上游的 SSE 流实时转换回 Kiro 识别的 AWS event-stream 二进制帧。
-- **CPS（控制面，默认 19801）**：应答模型列表（从中转站 `/v1/models` 拉取）、用量等控制面请求。
+- KRS 监听 `127.0.0.1:19800`，把 CodeWhisperer 请求转换为当前 Provider 格式，再把上游 SSE 转回 Kiro 的 AWS event-stream 帧。
+- CPS 监听 `127.0.0.1:19801`，处理模型列表和控制面请求。
+- `/v1/models` 自动发现兼容 `{data:[...]}`、`{models:[...]}` 和原始数组。发现失败时，只显示当前 Profile 手工配置的默认模型和映射模型。
+- OpenAI Responses 使用原生 function tool、`function_call`、`function_call_output`、reasoning summary、图片和无状态 encrypted reasoning。
+- OpenAI 加密 reasoning 会封装进带版本的 Kiro reasoning 签名，用于下一轮工具回放。外部前缀、损坏或缺失的信封会被丢弃，但工具结果和普通对话仍会继续，不会因 reasoning 降级而中断。
+- 只有在尚未输出正文、推理或工具事件前才允许重试；一旦已输出，流错误只报告一次，禁止重放。
 
-扩展在激活时把上述端点配置指向本地代理，关闭代理时还原。
+## 安装与配置
 
-## 使用
+1. 用 `Extensions: Install from VSIX` 安装 `api2kiro-1.8.0.vsix`，然后重新加载 Kiro。
+2. 打开 API2Kiro 侧边栏并选择 Provider 模式。
+3. 输入该模式的中转地址、新轮换的 API Key，以及可选的默认模型/模型映射。
+4. 切换模式或端点配置后重新加载 Kiro。
 
-1. 安装扩展（见下方“构建”，或从 Releases 下载 `.vsix`，用 `Extensions: Install from VSIX` 安装）。
-2. **重新加载窗口**（Kiro 启动时才会读取端点配置）。
-3. 打开左侧 **API2Kiro** 面板，填写：
-   - 中转站地址：Anthropic 格式，例如 `https://your-relay.com/v1`
-   - API Key：`sk-...`
-4. 保存后**再重新加载一次窗口**，Kiro 模型列表即为中转站提供的模型。
+模型发现会自动执行。如果中转站不提供 `/v1/models`，请在当前 Profile 中手工配置默认模型或映射。
 
 ## 配置项
 
 | 配置 | 说明 |
 | --- | --- |
-| `api2kiro.enabled` | 启用/关闭代理 |
-| `api2kiro.baseUrl` | 中转站地址（Anthropic 格式） |
-| `api2kiro.apiKey` | 中转站 API Key |
-| `api2kiro.port` / `api2kiro.cpsPort` | 本地代理端口（多窗口共用，一般无需修改） |
+| `api2kiro.mode` | `kiro`、`anthropic` 或 `openai-responses` |
+| `api2kiro.baseUrl` / `officialBaseUrl` / `openaiBaseUrl` | 三种模式相互隔离的中转地址 |
+| `api2kiro.defaultModel` / `officialDefaultModel` / `openaiDefaultModel` | 各模式的手工兜底模型 |
+| `api2kiro.modelMapping` / `officialModelMapping` / `openaiModelMapping` | 各模式的 Kiro 到上游模型映射 |
 | `api2kiro.maxTokens` | 最大输出 token |
-| `api2kiro.thinking` / `api2kiro.thinkingBudget` | 扩展思考模式与预算 |
-| `api2kiro.effortMode` / `api2kiro.effortBudgets` | 思考档位处理方式与各档位预算 |
-| `api2kiro.defaultModel` / `api2kiro.modelMapping` | 模型兜底与映射 |
-| `api2kiro.interceptIntentClassifier` | 本地拦截意图分类请求，省一次上游调用 |
-| `api2kiro.usagePath` | 额度查询接口路径（留空用面板接口，或填 OpenAI/New-API 风格路径） |
-| `api2kiro.debug` | 写调试日志（Key 脱敏） |
+| `api2kiro.autoRetry` / `api2kiro.maxRetries` | 仅输出前生效的安全重试策略 |
+| `api2kiro.port` / `api2kiro.cpsPort` | 多窗口共享的本地代理端口 |
 
-## 构建
+API Key 不属于公开配置项，只能通过侧边栏和 SecretStorage 管理。
 
-需要 Node.js 18+。
+## 构建与验证
 
-```bash
+需要 Node.js 18+ 和 PowerShell 7。
+
+```powershell
 npm install
-npm run compile   # 类型检查
-npm run bundle    # esbuild 打包到 dist/
-npm run package   # 生成 .vsix
+npm test
+npm run compile
+npm run bundle
+npm run package
+npm run scan:secrets
 ```
 
-## 致敬
+`npm run package` 生成 `api2kiro-1.8.0.vsix`。使用 `Extensions: Install from VSIX` 本地安装。需要回滚时，用同一命令重新安装已知可用的旧版 VSIX 并重新加载 Kiro。保留的 `api2kiro.api2kiro` 身份用于本地原位升级/回滚；本衍生版不是上游 Marketplace 发布。
 
-向 **[kiro2cc-proxy](https://github.com/TsinHzl/kiro2cc-proxy)** 以及更广义的“Kiro 反代”社区致敬。是那个项目率先提出了把 Kiro 的 `codewhisperer.config` 端点重定向到本地代理、并在 CodeWhisperer 事件流与 Anthropic Messages API 之间双向翻译的思路——本扩展正是站在这个基础之上。API2Kiro 是对同一思路的独立、从零编写的开源实现，专注于把体验做进编辑器内（配置面板、真实用量、缓存命中率、多窗口共享）。原始技术思路的功劳，归于先行者。
+## 归属说明
+
+本仓库是 [SunNorthGod/API2Kiro](https://github.com/SunNorthGod/API2Kiro) 的衍生构建，由 [silver-builds-autumn/Kiro-Model-Bridge](https://github.com/silver-builds-autumn/Kiro-Model-Bridge) 维护。准确的衍生状态见 [NOTICE](./NOTICE)。为满足 MIT 许可及本地 VSIX 原位升级兼容，保留上游许可证和 publisher/name。
+
+同时感谢 [kiro2cc-proxy](https://github.com/TsinHzl/kiro2cc-proxy) 及 Kiro 互操作社区此前在端点重定向和事件流转换方面的探索。
 
 ## 许可
 

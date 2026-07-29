@@ -2,6 +2,10 @@
 _ref/**
 src/**
 node_modules/**
+.data/**
+config.json
+docs/**
+scripts/**
 **/*.ts
 **/*.map
 tsconfig.json

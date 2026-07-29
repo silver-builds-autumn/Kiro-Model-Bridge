@@ -1,72 +1,77 @@
-# API2Kiro
+# API2Kiro Multi-Provider Build
 
 English | [简体中文](./README.zh-CN.md)
 
-Route [Kiro](https://kiro.dev)'s AI calls through any **Anthropic-format** relay/gateway: configure your own base URL and API key, view usage, and monitor prompt-cache hit rate — with multi-window support.
+This local VSIX routes [Kiro](https://kiro.dev) through Kiro-compatible, Anthropic Messages, or OpenAI Responses relays while preserving Kiro's AWS event-stream interface.
 
-> For learning and interoperability research only. Treat all upstream/network responses as untrusted data.
+> Security notice: API keys published in chats, issues, logs, or screenshots must be revoked and rotated before this extension is used. Enter only a newly rotated key through the local sidebar.
 
 <p align="center">
   <img src="./assets/panel.png" alt="API2Kiro control panel" width="360">
 </p>
 
-## Features
+## Provider modes
 
-- **Bring your own Anthropic API** — runs a local proxy that redirects Kiro's AI requests to the relay you configure (`/v1/messages`).
-- **Visual control panel** — a sidebar view to set the relay base URL and API key, and toggle the proxy on/off.
-- **Usage query** — shows the relay's real usage right in the panel (request count, input/output tokens, cost, per-model breakdown), no need to open a web page.
-- **Cache hit rate** — aggregates an authoritative prompt-cache hit rate from the relay's request records.
-- **Thinking effort levels** — supports Kiro's max/xhigh/high/medium/low picker, mapped to a thinking budget or to the matching model variant.
-- **Multi-window sharing** — multiple Kiro windows share a single local proxy; the first to start serves all windows, and the rest take over automatically if it exits.
+| Mode | Upstream endpoint | Authentication |
+| --- | --- | --- |
+| `kiro` | `/v1/messages` | Kiro-compatible Anthropic headers |
+| `anthropic` | `/v1/messages` | Anthropic headers plus Bearer compatibility |
+| `openai-responses` | `/v1/responses` | Bearer only |
 
-## How it works
+Each mode has an isolated profile: API key, base URL, default model, model mapping, and model-discovery cache never cross provider boundaries. API keys are stored in VS Code/Kiro `SecretStorage`, not in extension settings. Legacy plaintext values are cleared only after a successful SecretStorage write and exact readback.
 
-Kiro decides where to send AI requests via its `codewhisperer.config.*Endpoints` settings. This extension starts two local services on `127.0.0.1`:
+## Behavior
 
-- **KRS (runtime, default 19800)** — receives Kiro's `generateAssistantResponse` requests (CodeWhisperer format), translates them into the Anthropic Messages API and forwards them to your relay, then converts the upstream SSE stream back into the AWS event-stream binary frames Kiro expects, in real time.
-- **CPS (control plane, default 19801)** — answers control-plane requests such as the model list (fetched from the relay's `/v1/models`) and usage.
+- KRS listens on `127.0.0.1:19800`, translates CodeWhisperer requests into the selected provider format, and converts upstream SSE back into Kiro's AWS event-stream frames.
+- CPS listens on `127.0.0.1:19801` and serves model/control-plane requests.
+- `/v1/models` discovery accepts `{data:[...]}`, `{models:[...]}`, and raw arrays. If discovery fails, only the current profile's manually configured default/mapped models are shown.
+- OpenAI Responses uses native function tools, `function_call`, `function_call_output`, reasoning summaries, images, and stateless encrypted reasoning.
+- Encrypted OpenAI reasoning is stored in a versioned Kiro reasoning-signature envelope for the next tool turn. Foreign, malformed, or missing envelopes are dropped; the tool result and normal conversation continue without encrypted reasoning replay.
+- Retry is allowed only before text, reasoning, or a tool event is committed. A stream failure after visible output is reported once and is never replayed.
 
-On activation the extension points those endpoint settings at the local proxy, and restores them when the proxy is disabled.
+## Setup
 
-## Usage
+1. Install `api2kiro-1.8.0.vsix` with `Extensions: Install from VSIX`, then reload Kiro.
+2. Open the API2Kiro sidebar and select a provider mode.
+3. Enter that mode's relay base URL, a newly rotated API key, and an optional default model/model mapping.
+4. Reload Kiro after changing the mode or endpoint configuration.
 
-1. Install the extension (see [Build](#build), or download the `.vsix` from Releases and use `Extensions: Install from VSIX`).
-2. **Reload the window** (Kiro reads the endpoint config at startup).
-3. Open the **API2Kiro** panel in the sidebar and fill in:
-   - Relay base URL — Anthropic format, e.g. `https://your-relay.com/v1`
-   - API key — `sk-...`
-4. After saving, **reload the window once more**. Kiro's model list will now be the models your relay provides.
+Model discovery runs automatically. Configure a default model or mapping in the current profile when the relay does not expose `/v1/models`.
 
 ## Configuration
 
 | Setting | Description |
 | --- | --- |
-| `api2kiro.enabled` | Enable/disable the proxy |
-| `api2kiro.baseUrl` | Relay base URL (Anthropic format) |
-| `api2kiro.apiKey` | Relay API key |
-| `api2kiro.port` / `api2kiro.cpsPort` | Local proxy ports (shared across windows; usually no need to change) |
-| `api2kiro.maxTokens` | Max output tokens |
-| `api2kiro.thinking` / `api2kiro.thinkingBudget` | Extended thinking mode and budget |
-| `api2kiro.effortMode` / `api2kiro.effortBudgets` | How effort levels are handled, and the per-level budgets |
-| `api2kiro.defaultModel` / `api2kiro.modelMapping` | Fallback model and model-id mapping |
-| `api2kiro.interceptIntentClassifier` | Intercept the intent-classifier request locally to save one upstream call |
-| `api2kiro.usagePath` | Usage query path (leave empty for the panel API, or set an OpenAI/New-API-style path) |
-| `api2kiro.debug` | Write a debug log (API key redacted) |
+| `api2kiro.mode` | `kiro`, `anthropic`, or `openai-responses` |
+| `api2kiro.baseUrl` / `officialBaseUrl` / `openaiBaseUrl` | Isolated provider base URLs |
+| `api2kiro.defaultModel` / `officialDefaultModel` / `openaiDefaultModel` | Per-provider manual fallback model |
+| `api2kiro.modelMapping` / `officialModelMapping` / `openaiModelMapping` | Per-provider Kiro-to-upstream model mapping |
+| `api2kiro.maxTokens` | Maximum output tokens |
+| `api2kiro.autoRetry` / `api2kiro.maxRetries` | Safe pre-commit retry policy |
+| `api2kiro.port` / `api2kiro.cpsPort` | Shared local proxy ports |
 
-## Build
+The API key is intentionally absent from public configuration and is managed through the sidebar/SecretStorage.
 
-Requires Node.js 18+.
+## Build and verify
 
-```bash
+Requires Node.js 18+ and PowerShell 7.
+
+```powershell
 npm install
-npm run compile   # type-check
-npm run bundle    # bundle to dist/ with esbuild
-npm run package   # produce the .vsix
+npm test
+npm run compile
+npm run bundle
+npm run package
+npm run scan:secrets
 ```
 
-## Acknowledgements
+`npm run package` produces `api2kiro-1.8.0.vsix`. Install it locally with `Extensions: Install from VSIX`. To roll back, reinstall a known-good earlier VSIX with the same command and reload Kiro. The retained `api2kiro.api2kiro` identity supports this local in-place upgrade/rollback flow; this derivative is not an upstream Marketplace release.
 
-Hats off to **[kiro2cc-proxy](https://github.com/TsinHzl/kiro2cc-proxy)** and the broader "Kiro reverse-proxy" community. That project pioneered the approach of redirecting Kiro's `codewhisperer.config` endpoints to a local proxy and translating the CodeWhisperer event-stream to/from the Anthropic Messages API — the foundation this extension is built on. API2Kiro is an independent, from-scratch, open-source take on the same idea, focused on a clean in-editor experience (configuration panel, real usage, cache hit rate, multi-window sharing). All credit for the original technique goes to those who came before.
+## Attribution
+
+This repository is a derivative build of [SunNorthGod/API2Kiro](https://github.com/SunNorthGod/API2Kiro), maintained in [silver-builds-autumn/Kiro-Model-Bridge](https://github.com/silver-builds-autumn/Kiro-Model-Bridge). See [NOTICE](./NOTICE) for the exact derivative status. The original API2Kiro MIT license and publisher/name values are retained for license compliance and local VSIX upgrade compatibility.
+
+The project also acknowledges [kiro2cc-proxy](https://github.com/TsinHzl/kiro2cc-proxy) and the broader Kiro interoperability community for the endpoint-redirection and event-stream translation work that preceded it.
 
 ## License
 
