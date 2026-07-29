@@ -139,3 +139,54 @@ test("Responses effort 将 max 归一化为 xhigh", () => {
   }
   assert.equal(normalizeOpenAIEffort(undefined), undefined);
 });
+
+test("Responses 请求兼容顶层工具定义和字符串工具参数", () => {
+  const body = buildOpenAIResponsesRequest({
+    conversationState: {
+      history: [{
+        assistantResponseMessage: {
+          toolUses: [{
+            toolUseId: "call-string",
+            name: "read_file",
+            input: '{"path":"a.ts"}',
+          }],
+        },
+      }],
+      currentMessage: {
+        userInputMessage: {
+          content: "continue",
+          userInputMessageContext: {
+            tools: [{
+              name: "read_file",
+              description: "Read one file",
+              inputSchema: {
+                type: "object",
+                properties: { path: { type: "string" } },
+                required: ["path"],
+              },
+            }],
+          },
+        },
+      },
+    },
+  }, {
+    model: "gpt-test",
+    maxOutputTokens: 1024,
+  });
+
+  assert.deepEqual(body.tools, [{
+    type: "function",
+    name: "read_file",
+    description: "Read one file",
+    parameters: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+    },
+    strict: false,
+  }]);
+  assert.equal(
+    body.input.find((item) => item.type === "function_call")?.arguments,
+    '{"path":"a.ts"}',
+  );
+});

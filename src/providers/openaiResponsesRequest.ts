@@ -89,19 +89,20 @@ function userMessageItems(message: CwUserInputMessage): Array<Record<string, unk
 }
 
 function toolParameters(spec: CwToolSpec): AnthropicJsonSchema {
-  const inputSchema = spec.toolSpecification?.inputSchema;
-  if (inputSchema && typeof inputSchema === "object" && "json" in inputSchema) {
-    const json = inputSchema.json;
-    if (json && typeof json === "object") {
-      return json as AnthropicJsonSchema;
-    }
+  const tool = spec.toolSpecification ?? spec;
+  const inputSchema = tool.inputSchema;
+  if (inputSchema && typeof inputSchema === "object") {
+    const json = "json" in inputSchema ? inputSchema.json : undefined;
+    return json && typeof json === "object"
+      ? json as AnthropicJsonSchema
+      : inputSchema as AnthropicJsonSchema;
   }
   return { type: "object", properties: {} };
 }
 
 function responseTools(specs: CwToolSpec[]): Array<Record<string, unknown>> {
   return specs.flatMap((spec) => {
-    const tool = spec.toolSpecification;
+    const tool = spec.toolSpecification ?? spec;
     if (!tool?.name) {
       return [];
     }
@@ -116,6 +117,18 @@ function responseTools(specs: CwToolSpec[]): Array<Record<string, unknown>> {
     }
     return [mapped];
   });
+}
+
+function serializeToolArguments(input: unknown): string {
+  if (typeof input !== "string") {
+    return JSON.stringify(input ?? {});
+  }
+  try {
+    JSON.parse(input);
+    return input;
+  } catch {
+    return "{}";
+  }
 }
 
 /** 将 Kiro 会话历史转换为 OpenAI Responses 的原生 input items。 */
@@ -160,7 +173,7 @@ export function buildOpenAIResponsesRequest(
         type: "function_call",
         call_id: call.toolUseId,
         name: call.name,
-        arguments: JSON.stringify(call.input ?? {}),
+        arguments: serializeToolArguments(call.input),
       });
     }
   }
