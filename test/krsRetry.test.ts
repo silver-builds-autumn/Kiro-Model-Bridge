@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { AnthropicStreamConverter } from "../src/anthropicStream";
 import type { CwEvent } from "../src/cwTypes";
 import { OpenAIResponsesStreamConverter } from "../src/providers/openaiResponsesStream";
 import type { PreparedProviderRequest } from "../src/providers/types";
@@ -51,6 +52,31 @@ function responsesText(text: string): UpstreamResponse {
       type: "response.completed",
       response: { usage: { input_tokens: 1, output_tokens: 1 }, output: [] },
     },
+  ])]);
+}
+
+function anthropicTextWithDuplicate(text: string): UpstreamResponse {
+  return response(200, [sse([
+    { type: "message_start", message: { usage: { input_tokens: 1 } } },
+    { type: "content_block_start", content_block: { type: "text" } },
+    { type: "content_block_delta", delta: { type: "text_delta", text } },
+    { type: "content_block_delta", delta: { type: "text_delta", text } },
+    { type: "content_block_stop" },
+    { type: "message_stop" },
+  ])]);
+}
+
+function anthropicToolWithDuplicateInput(input: string): UpstreamResponse {
+  return response(200, [sse([
+    { type: "message_start", message: { usage: { input_tokens: 1 } } },
+    {
+      type: "content_block_start",
+      content_block: { type: "tool_use", id: "tool-1", name: "read_file" },
+    },
+    { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: input } },
+    { type: "content_block_delta", delta: { type: "input_json_delta", partial_json: input } },
+    { type: "content_block_stop" },
+    { type: "message_stop" },
   ])]);
 }
 
@@ -139,6 +165,17 @@ function fakePreparedRequest(): PreparedProviderRequest {
   };
 }
 
+function fakeAnthropicPreparedRequest(): PreparedProviderRequest {
+  return {
+    url: "https://relay.example/v1/messages",
+    headers: { "x-api-key": "test" },
+    body: "{}",
+    modelId: "claude-test",
+    createConverter: (conversationId) =>
+      new AnthropicStreamConverter(conversationId, "claude-test"),
+  };
+}
+
 test("未输出事件时 429 可重试", async () => {
   const upstream = sequenceTransport([httpError(429), responsesText("ok")]);
   const sink = recordingSink();
@@ -221,4 +258,38 @@ test("流诊断只记录 SSE 摘要和转换计数", async () => {
     },
   ]);
   assert.doesNotMatch(JSON.stringify(records), /重复片段/);
+});
+
+test("重复的 Anthropic 文本 delta 只展示一次", async () => {
+  const upstream = sequenceTransport([anthropicTextWithDuplicate("重复片段")]);
+  const sink = recordingSink();
+  const records: Array<{ deduplicated?: boolean }> = [];
+
+  await runPreparedWithRetry(fakeAnthropicPreparedRequest(), upstream, sink, {
+    maxRetries: 0,
+    onSseRecord: (record) => records.push(record),
+  });
+
+  assert.equal(
+    sink.events.filter((event) => event.assistantResponseEvent).length,
+    1,
+  );
+  assert.equal(records.filter((record) => record.deduplicated).length, 1);
+});
+
+test("重复的 Anthropic 工具 JSON delta 不去重", async () => {
+  const upstream = sequenceTransport([anthropicToolWithDuplicateInput('{"path":"a.ts"}')]);
+  const sink = recordingSink();
+  const records: Array<{ deduplicated?: boolean }> = [];
+
+  await runPreparedWithRetry(fakeAnthropicPreparedRequest(), upstream, sink, {
+    maxRetries: 0,
+    onSseRecord: (record) => records.push(record),
+  });
+
+  assert.equal(records.filter((record) => record.deduplicated).length, 0);
+  assert.equal(
+    sink.events.find((event) => event.toolUseEvent)?.toolUseEvent?.input,
+    '{"path":"a.ts"}{"path":"a.ts"}',
+  );
 });

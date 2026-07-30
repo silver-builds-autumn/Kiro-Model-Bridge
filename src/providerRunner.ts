@@ -29,6 +29,7 @@ export interface SseRecordDiagnostic {
   payloadHash: string;
   convertedEvents: number;
   assistantEvents: number;
+  deduplicated: boolean;
 }
 
 interface PumpResult {
@@ -63,10 +64,20 @@ function eventType(data: string): string | undefined {
   }
 }
 
+function isAnthropicTextDelta(data: string): boolean {
+  try {
+    const value = JSON.parse(data) as { type?: unknown; delta?: { type?: unknown } };
+    return value.type === "content_block_delta" && value.delta?.type === "text_delta";
+  } catch {
+    return false;
+  }
+}
+
 function summarizeSseRecord(
   event: ParsedSseEvent,
   events: CwEvent[],
   attempt: number,
+  deduplicated = false,
 ): SseRecordDiagnostic {
   return {
     attempt,
@@ -75,6 +86,7 @@ function summarizeSseRecord(
     payloadHash: createHash("sha256").update(event.data).digest("hex"),
     convertedEvents: events.length,
     assistantEvents: events.filter((item) => item.assistantResponseEvent !== undefined).length,
+    deduplicated,
   };
 }
 
@@ -89,14 +101,26 @@ function pumpUpstream(
     const parser = new SseParser();
     const decoder = new StringDecoder("utf8");
     const body = response.body;
+    const seenAnthropicTextDeltaHashes = new Set<string>();
     let settled = false;
     let ended = false;
 
+    const processEvent = (event: ParsedSseEvent) => {
+      const payloadHash = createHash("sha256").update(event.data).digest("hex");
+      const deduplicationCandidate = isAnthropicTextDelta(event.data);
+      const deduplicated = deduplicationCandidate && seenAnthropicTextDeltaHashes.has(payloadHash);
+      if (deduplicationCandidate && !deduplicated) {
+        seenAnthropicTextDeltaHashes.add(payloadHash);
+      }
+
+      const events = deduplicated ? [] : feedRecord(converter, event);
+      onSseRecord?.(summarizeSseRecord(event, events, attempt, deduplicated));
+      onEvents(events);
+    };
+
     const consume = (text: string) => {
       for (const event of parser.push(text)) {
-        const events = feedRecord(converter, event);
-        onSseRecord?.(summarizeSseRecord(event, events, attempt));
-        onEvents(events);
+        processEvent(event);
       }
     };
 
@@ -124,9 +148,7 @@ function pumpUpstream(
       try {
         consume(decoder.end());
         for (const event of parser.flush()) {
-          const events = feedRecord(converter, event);
-          onSseRecord?.(summarizeSseRecord(event, events, attempt));
-          onEvents(events);
+          processEvent(event);
         }
         onEvents(converter.flush());
         finish({});
