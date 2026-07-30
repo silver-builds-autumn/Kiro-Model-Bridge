@@ -141,6 +141,11 @@ export function isDebug(): boolean {
   return cfg().get<boolean>("debug", false);
 }
 
+/** 仅记录上游 SSE 的摘要与转换计数，不记录正文或凭据。 */
+export function getStreamDiagnostics(): boolean {
+  return cfg().get<boolean>("streamDiagnostics", false);
+}
+
 export function getInterceptIntentClassifier(): boolean {
   return cfg().get<boolean>("interceptIntentClassifier", true);
 }

@@ -53,6 +53,7 @@
 | `api2kiro.maxTokens` | 最大输出 token |
 | `api2kiro.effortMode` / `api2kiro.effortBudgets` | Kiro 思考档位选择器及预算；Claude Messages 模式会把所选档位转换为 Anthropic 原生 `thinking.budget_tokens` |
 | `api2kiro.autoRetry` / `api2kiro.maxRetries` | 仅输出前生效的安全重试策略 |
+| `api2kiro.streamDiagnostics` | 默认关闭的重复输出诊断。记录每条上游 SSE 的类型、字节数、SHA-256 摘要和转换事件计数；不记录消息正文或凭据。 |
 | `api2kiro.port` / `api2kiro.cpsPort` | 多窗口共享的本地代理端口 |
 
 API Key 不属于公开配置项，只能通过侧边栏和 SecretStorage 管理。

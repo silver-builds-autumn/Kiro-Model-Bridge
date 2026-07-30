@@ -182,6 +182,11 @@
           "default": false,
           "description": "把请求/响应写入调试日志文件（Key 会脱敏）。"
         },
+        "api2kiro.streamDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "description": "仅记录上游 SSE 的类型、字节数、SHA-256 摘要和转换事件计数，用于排查重复输出；不记录正文或凭据。"
+        },
         "api2kiro.mode": {
           "type": "string",
           "enum": [

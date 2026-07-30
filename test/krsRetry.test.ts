@@ -177,3 +177,48 @@ test("未输出事件时流终态错误可重试", async () => {
   assert.match(sink.text(), /recovered/);
   assert.doesNotMatch(sink.text(), /server_error|cipher-secret/);
 });
+
+test("流诊断只记录 SSE 摘要和转换计数", async () => {
+  const upstream = sequenceTransport([responsesText("重复片段")]);
+  const sink = recordingSink();
+  const records: Array<{
+    attempt: number;
+    type?: string;
+    payloadBytes: number;
+    payloadHash: string;
+    convertedEvents: number;
+    assistantEvents: number;
+  }> = [];
+
+  await runPreparedWithRetry(fakePreparedRequest(), upstream, sink, {
+    maxRetries: 0,
+    onSseRecord: (record) => records.push(record),
+  });
+
+  assert.deepEqual(records.map((record) => ({
+    attempt: record.attempt,
+    type: record.type,
+    payloadBytes: record.payloadBytes > 0,
+    payloadHash: /^[a-f0-9]{64}$/.test(record.payloadHash),
+    convertedEvents: record.convertedEvents,
+    assistantEvents: record.assistantEvents,
+  })), [
+    {
+      attempt: 1,
+      type: "response.output_text.delta",
+      payloadBytes: true,
+      payloadHash: true,
+      convertedEvents: 2,
+      assistantEvents: 1,
+    },
+    {
+      attempt: 1,
+      type: "response.completed",
+      payloadBytes: true,
+      payloadHash: true,
+      convertedEvents: 1,
+      assistantEvents: 0,
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(records), /重复片段/);
+});

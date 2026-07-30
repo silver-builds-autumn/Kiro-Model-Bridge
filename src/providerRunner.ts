@@ -1,4 +1,5 @@
 import { StringDecoder } from "string_decoder";
+import { createHash } from "node:crypto";
 import type { CwEvent } from "./cwTypes";
 import type { PreparedProviderRequest, ProviderStreamConverter } from "./providers/types";
 import { SseParser, type ParsedSseEvent } from "./sseParser";
@@ -18,6 +19,16 @@ export interface ProviderSink {
 export interface ProviderRetryOptions {
   maxRetries: number;
   conversationId?: string;
+  onSseRecord?: (record: SseRecordDiagnostic) => void;
+}
+
+export interface SseRecordDiagnostic {
+  attempt: number;
+  type?: string;
+  payloadBytes: number;
+  payloadHash: string;
+  convertedEvents: number;
+  assistantEvents: number;
 }
 
 interface PumpResult {
@@ -43,10 +54,36 @@ function feedRecord(
   return out;
 }
 
+function eventType(data: string): string | undefined {
+  try {
+    const value = JSON.parse(data) as { type?: unknown };
+    return typeof value.type === "string" ? value.type : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function summarizeSseRecord(
+  event: ParsedSseEvent,
+  events: CwEvent[],
+  attempt: number,
+): SseRecordDiagnostic {
+  return {
+    attempt,
+    type: eventType(event.data),
+    payloadBytes: Buffer.byteLength(event.data, "utf8"),
+    payloadHash: createHash("sha256").update(event.data).digest("hex"),
+    convertedEvents: events.length,
+    assistantEvents: events.filter((item) => item.assistantResponseEvent !== undefined).length,
+  };
+}
+
 function pumpUpstream(
   response: UpstreamResponse,
   converter: ProviderStreamConverter,
   onEvents: (events: CwEvent[]) => void,
+  onSseRecord: ((record: SseRecordDiagnostic) => void) | undefined,
+  attempt: number,
 ): Promise<PumpResult> {
   return new Promise((resolve) => {
     const parser = new SseParser();
@@ -57,7 +94,9 @@ function pumpUpstream(
 
     const consume = (text: string) => {
       for (const event of parser.push(text)) {
-        onEvents(feedRecord(converter, event));
+        const events = feedRecord(converter, event);
+        onSseRecord?.(summarizeSseRecord(event, events, attempt));
+        onEvents(events);
       }
     };
 
@@ -85,7 +124,9 @@ function pumpUpstream(
       try {
         consume(decoder.end());
         for (const event of parser.flush()) {
-          onEvents(feedRecord(converter, event));
+          const events = feedRecord(converter, event);
+          onSseRecord?.(summarizeSseRecord(event, events, attempt));
+          onEvents(events);
         }
         onEvents(converter.flush());
         finish({});
@@ -175,7 +216,13 @@ export async function runPreparedWithRetry(
       }
       pending = [];
     };
-    const pumped = await pumpUpstream(upstream, converter, writePendingIfCommitted);
+    const pumped = await pumpUpstream(
+      upstream,
+      converter,
+      writePendingIfCommitted,
+      options.onSseRecord,
+      attempt + 1,
+    );
     const terminalError = converter.terminalError ?? pumped.streamError;
 
     if (terminalError) {

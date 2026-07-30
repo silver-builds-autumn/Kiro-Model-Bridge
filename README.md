@@ -53,6 +53,7 @@ Model discovery runs automatically. Configure a default model or mapping in the 
 | `api2kiro.maxTokens` | Maximum output tokens |
 | `api2kiro.effortMode` / `api2kiro.effortBudgets` | Kiro thinking-tier selector and its budgets; in Claude Messages mode the selected tier becomes native Anthropic `thinking.budget_tokens` |
 | `api2kiro.autoRetry` / `api2kiro.maxRetries` | Safe pre-commit retry policy |
+| `api2kiro.streamDiagnostics` | Default-off duplicate-output diagnostics. Logs each upstream SSE record's type, byte count, SHA-256 digest, and converted-event count; it never logs message text or credentials. |
 | `api2kiro.port` / `api2kiro.cpsPort` | Shared local proxy ports |
 
 The API key is intentionally absent from public configuration and is managed through the sidebar/SecretStorage.

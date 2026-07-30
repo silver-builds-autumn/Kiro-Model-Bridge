@@ -21,6 +21,7 @@ import {
   getModelMapping,
   getThinkingBudget,
   getThinkingConfig,
+  getStreamDiagnostics,
 } from "./config";
 import { debug, error, info } from "./log";
 import { runPreparedWithRetry, type ProviderSink, type ProviderTransport } from "./providerRunner";
@@ -34,6 +35,7 @@ export class KrsProxyServer {
   private holder: PortHolder;
   private port: number;
   private context: vscode.ExtensionContext;
+  private diagnosticRequestSequence = 0;
 
   constructor(context: vscode.ExtensionContext, port: number, onOwnershipChange?: OwnershipListener) {
     this.context = context;
@@ -281,7 +283,13 @@ export class KrsProxyServer {
     );
     debug("upstream request", { url: prepared.url, body: prepared.body });
 
-    await this.streamWithRetry(res, prepared, convId);
+    const streamDiagnostics = getStreamDiagnostics();
+    await this.streamWithRetry(
+      res,
+      prepared,
+      convId,
+      streamDiagnostics ? ++this.diagnosticRequestSequence : undefined,
+    );
   }
 
   /**
@@ -293,6 +301,7 @@ export class KrsProxyServer {
     res: http.ServerResponse,
     prepared: PreparedProviderRequest,
     convId: string,
+    diagnosticRequestId?: number,
   ): Promise<void> {
     const transport: ProviderTransport = {
       request: (item) => requestUpstream("POST", item.url, item.headers, item.body),
@@ -325,6 +334,9 @@ export class KrsProxyServer {
     await runPreparedWithRetry(prepared, transport, sink, {
       maxRetries: getAutoRetry() ? getMaxRetries() : 0,
       conversationId: convId,
+      onSseRecord: diagnosticRequestId === undefined
+        ? undefined
+        : (record) => info(`stream req=${diagnosticRequestId} conv=${convId}`, record),
     });
   }
 }
